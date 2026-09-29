@@ -219,6 +219,10 @@ final class AppController {
             let detail = AutoArrange.lastOutcomes
                 .map { "  \($0.app): \($0.outcome.described)" }
                 .joined(separator: "\n")
+                + (AutoArrange.lastCorrections == 0 ? "" : "\n  " + (AutoArrange.lastCorrections == 1
+                    ? tr("1 window needed a second nudge.")
+                    : String(format: tr("%d windows needed a second nudge."),
+                             AutoArrange.lastCorrections)))
             let report = (moved == 1
                 ? String(format: tr("Screen %@: 1 window arranged with the “%@” arrangement."),
                          screen.localizedName, strategy.label)
@@ -312,19 +316,13 @@ func diagnosticsText() -> String {
         print(String(format: tr("  windows on this Desktop: %d — would arrange %d, would leave %d"),
                      windows.count, plan.tiled, plan.untouched))
 
-        let ordered = AX.sortedFrontToBack(windows).prefix(grid.cols * grid.rows).sorted { a, b in
-            let fa = a.frame ?? .zero, fb = b.frame ?? .zero
-            return fa.minX == fb.minX ? fa.maxY > fb.maxY : fa.minX < fb.minX
-        }
-        let cells = AutoArrange.partition(count: ordered.count, grid: grid,
-                                          screenAspect: screen.visibleFrame.width / screen.visibleFrame.height,
-                                          strategy: config.defaultStrategy,
-                                          masterFraction: config.masterFraction)
-        for (window, cell) in zip(ordered, cells) {
-            let target = Geometry.frame(for: cell, in: grid, on: screen.visibleFrame)
+        // The same pairing the arrangement would use, so this prints what would really happen.
+        for move in AutoArrange.moves(for: windows, on: screen, grid: grid,
+                                      strategy: config.defaultStrategy) {
             print(String(format: tr("    %@ — %@ → cell col %d row %d %d×%d = %@"),
-                         window.appName, short(window.frame ?? .zero),
-                         cell.col, cell.row, cell.w, cell.h, short(target)))
+                         move.window.appName, short(move.window.frame ?? .zero),
+                         move.cell.col, move.cell.row, move.cell.w, move.cell.h,
+                         short(move.target)))
         }
         print("")
     }

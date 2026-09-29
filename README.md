@@ -32,8 +32,8 @@ screen onto a grid — 3×2, 4×2, or anything up to 32×32 — instead of the u
   visible — four windows on an ultrawide become 2×2, six become 3×2. Outer and inner gaps are
   yours to set, per screen; the mode only decides how many cells there are.
 - **A live map of the screen,** in the popover. It shows the windows that are on that screen right
-  now, drawn on the cells they occupy and labelled with their app. Click a cell — or drag across
-  several — to send the frontmost window there.
+  now, drawn on the cells they occupy and labelled with their app. Drag a window's tile to move
+  that window; click a cell — or drag across several — to send the frontmost window there.
 - **Arrange all,** with five arrangements: **Balanced** (as square as the screen allows),
   **One per cell** (the grid taken literally, empty cells stay empty), **Columns**, **Rows**, and
   **Master + stack** (the front window large on the left, the rest stacked on the right). Windows
@@ -43,8 +43,12 @@ screen onto a grid — 3×2, 4×2, or anything up to 32×32 — instead of the u
   hotkey of its own.
 - **Auto-fit new windows** (optional): a window that has just opened lands in the largest free area
   of the grid.
-- **Careful with your desktop.** Only the Desktop/Space you are on is touched, full-screen windows
-  are skipped, and each window is placed with a single write — no visible shuffling while it lands.
+- **Careful with your desktop.** **Arrange all** only ever touches the screen under the pointer,
+  never your other displays. Only the Desktop/Space you are on is touched, full-screen windows are
+  skipped, and each window is placed with a single write — no visible shuffling while it lands.
+- **The shortest way round.** Which window goes into which cell is chosen to move the windows as
+  little as possible, so a window already sitting on its cell stays put instead of swapping with
+  a neighbour.
 - **Everything in one popover.** Settings are a page of it, not a separate window. English and
   Italian (System / English / Italiano).
 - **Nothing leaves your Mac.** No network requests at all, no telemetry, no account. Configuration
@@ -96,8 +100,10 @@ app and macOS asks again.
 **The popover.** Click the menu bar icon. The top of it is the map of the current screen; below it
 are the quick grid presets, **Arrange all**, and the pages for zones, layouts and settings.
 
-- **Place one window:** click a cell, or drag across a rectangle of cells. The frontmost window
-  goes there.
+- **Move one window:** drag its tile on the map to another cell. That window moves, not the front
+  one, and the popover stays open so you can move the next one.
+- **Place the front window:** click a cell, or drag across a rectangle of cells starting from an
+  empty one.
 - **Pick a grid:** tap a preset (2×1, 3×1, 4×1, 3×2, 4×2) or set columns and rows with the
   steppers, up to 32×32 — per screen, and per screen you can switch that grid between Fixed and
   Automatic. With **Rearrange on grid change** on, the screen re-tiles the moment you change it.
@@ -155,7 +161,8 @@ refused to move.
 Some windows do not obey, and that is not a bug in Tessera:
 
 - **Apps with a minimum size** larger than their cell keep their size. Tessera reports it rather
-  than pretending the window landed where it was asked to.
+  than pretending the window landed where it was asked to, and slides such a window back inside
+  the screen instead of leaving it hanging off the edge.
 - **Terminal** snaps to whole character rows and columns, so it lands a few pixels off its cell.
 - **Full-screen windows** live on a Desktop of their own and are skipped. Use `--exit-fullscreen`
   or the green button to bring them back.

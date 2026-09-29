@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **Quick grids in the popover**: Auto plus the presets that suit the shape of that screen, one
+  click away, with the arrangement named in a picker instead of hidden behind an icon. Picking an
+  arrangement makes it the default and applies it.
+- **Move one window from the map**: drag its tile to another cell. That window moves, not the
+  front one, and the popover stays open.
+- **The pairing of windows to cells now minimises movement**: a window already on its cell stays
+  there instead of swapping with a neighbour. `--diagnose` shows the same pairing an arrangement
+  would use.
+- **Arrangements are written back to back**, with no pause between windows: Tessera waits by
+  looking, and only writes a second time to a window that neither moved nor resized. An app that
+  refuses to shrink below its minimum is now slid back inside the screen instead of being left
+  hanging off the edge.
+
 ## 1.0.0 — 2026-09-29
 
 First public release.

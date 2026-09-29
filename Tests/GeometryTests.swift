@@ -147,5 +147,49 @@ let spaced = GridSpec(cols: 12, rows: 8, outerGap: 20, innerGap: 4)
 let derived = AutoArrange.bestGrid(for: 5, fitting: ultrawide, like: spaced)
 check(derived.outerGap == 20 && derived.innerGap == 4, "hand-picked gaps must be kept")
 
+// MARK: - Pairing windows with cells
+
+// Windows already sitting on their cells must not be shuffled: the pairing is the identity,
+// whatever order they arrive in.
+do {
+    let grid = GridSpec(cols: 3, rows: 2)
+    let cells = (0..<6).map { CellRect(col: $0 % 3, row: $0 / 3) }
+    let targets = cells.map { Geometry.frame(for: $0, in: grid, on: ultrawide) }
+    let shuffled = [4, 0, 5, 2, 1, 3]
+    let current = shuffled.map { targets[$0] }
+    let pairing = AutoArrange.pairing(current: current, targets: targets)
+    check(pairing == shuffled, "windows already on a cell must stay: got \(pairing)")
+}
+
+// Whatever the starting positions, the pairing never travels further than reading order does.
+do {
+    let grid = GridSpec(cols: 4, rows: 2)
+    let targets = (0..<8).map {
+        Geometry.frame(for: CellRect(col: $0 % 4, row: $0 / 4), in: grid, on: ultrawide)
+    }
+    var seed: UInt64 = 12345
+    func random(_ limit: CGFloat) -> CGFloat {
+        seed = seed &* 6364136223846793005 &+ 1442695040888963407
+        return CGFloat(seed >> 33) / CGFloat(UInt32.max) * limit
+    }
+    func travel(_ pairing: [Int], _ current: [CGRect]) -> CGFloat {
+        zip(current.indices, pairing).reduce(0) { total, pair in
+            let a = current[pair.0], b = targets[pair.1]
+            return total + hypot(a.midX - b.midX, a.midY - b.midY)
+        }
+    }
+    for _ in 0..<200 {
+        let current = (0..<8).map { _ in
+            CGRect(x: ultrawide.minX + random(ultrawide.width - 400),
+                   y: ultrawide.minY + random(ultrawide.height - 300),
+                   width: 400, height: 300)
+        }
+        let pairing = AutoArrange.pairing(current: current, targets: targets)
+        check(Set(pairing).count == 8, "every cell used exactly once: \(pairing)")
+        check(travel(pairing, current) <= travel(Array(0..<8), current) + 0.001,
+              "the pairing must not travel further than reading order")
+    }
+}
+
 print(failures == 0 ? "ALL GEOMETRY CHECKS PASSED" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

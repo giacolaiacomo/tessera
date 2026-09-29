@@ -77,11 +77,15 @@ extension PopoverModel {
         grid = GridSpec(cols: 3, rows: 2)
         autoGrid = true
         screenAspect = 21.0 / 9.0
+        // The renderer has no Accessibility access, so these stand-ins carry a window that
+        // points at nothing: the map only ever draws their name and their cell.
+        let nowhere = ManagedWindow(element: AXUIElementCreateSystemWide(), pid: 0,
+                                    bundleID: "", appName: "", title: "")
         occupants = [
-            AutoArrange.Occupant(appName: "Safari", cell: CellRect(col: 0, row: 0), isFocused: true, resistant: false),
-            AutoArrange.Occupant(appName: "Xcode", cell: CellRect(col: 1, row: 0, w: 1, h: 2), isFocused: false, resistant: false),
-            AutoArrange.Occupant(appName: "Notes", cell: CellRect(col: 0, row: 1), isFocused: false, resistant: false),
-            AutoArrange.Occupant(appName: "Preview", cell: CellRect(col: 2, row: 0, w: 1, h: 2), isFocused: false, resistant: true),
+            AutoArrange.Occupant(window: nowhere, appName: "Safari", cell: CellRect(col: 0, row: 0), isFocused: true, resistant: false),
+            AutoArrange.Occupant(window: nowhere, appName: "Xcode", cell: CellRect(col: 1, row: 0, w: 1, h: 2), isFocused: false, resistant: false),
+            AutoArrange.Occupant(window: nowhere, appName: "Notes", cell: CellRect(col: 0, row: 1), isFocused: false, resistant: false),
+            AutoArrange.Occupant(window: nowhere, appName: "Preview", cell: CellRect(col: 2, row: 0, w: 1, h: 2), isFocused: false, resistant: true),
         ]
         tiled = 4
         untouched = 1
@@ -101,10 +105,24 @@ struct GridPicker: View {
     var occupants: [AutoArrange.Occupant] = []
     var selected: CellRect?
     var enabled = true
+    /// Whether a plain click can place the front window. Dragging a window on the map works
+    /// even when it cannot: that gesture is about the window under the finger.
+    var canPick = true
     let onPick: (CellRect) -> Void
+    var onMove: ((AutoArrange.Occupant, CellRect) -> Void)?
+
+    /// A window picked up from the map: which one, and where inside it the drag started, so it
+    /// follows the pointer by the corner you grabbed rather than jumping under it.
+    private struct WindowDrag {
+        let index: Int
+        let colOffset: Int
+        let rowOffset: Int
+    }
 
     @State private var anchor: CellRect?
     @State private var highlight: CellRect?
+    @State private var windowDrag: WindowDrag?
+    @State private var travelled = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -170,19 +188,53 @@ struct GridPicker: View {
                      at: CGPoint(x: rect.midX, y: rect.midY))
     }
 
+    /// One gesture, two meanings, decided on the first event and never mid-drag:
+    /// starting on a window drags *that* window, starting on free space sweeps a rectangle of
+    /// cells for the front window. A press that never moves keeps the old meaning either way.
     private func drag(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 guard enabled else { return }
                 let current = cell(at: value.location, in: size)
-                let start = anchor ?? CellRect(col: current.col, row: current.row)
-                anchor = start
-                highlight = CellRect.spanning((start.col, start.row), current).clamped(to: grid)
+                let g = grid.clamped()
+                if anchor == nil && windowDrag == nil {
+                    let held = occupants.firstIndex {
+                        !$0.resistant && $0.cell.clamped(to: g).contains(col: current.col, row: current.row)
+                    }
+                    if let held, onMove != nil {
+                        let cell = occupants[held].cell.clamped(to: g)
+                        windowDrag = WindowDrag(index: held,
+                                                colOffset: current.col - cell.col,
+                                                rowOffset: current.row - cell.row)
+                    } else {
+                        anchor = CellRect(col: current.col, row: current.row)
+                    }
+                }
+                if abs(value.translation.width) + abs(value.translation.height) > 4 {
+                    travelled = true
+                }
+                if let drag = windowDrag {
+                    let cell = occupants[drag.index].cell.clamped(to: g)
+                    let col = min(max(0, current.col - drag.colOffset), max(0, g.cols - cell.w))
+                    let row = min(max(0, current.row - drag.rowOffset), max(0, g.rows - cell.h))
+                    highlight = CellRect(col: col, row: row, w: cell.w, h: cell.h)
+                } else if let start = anchor {
+                    highlight = CellRect.spanning((start.col, start.row), current).clamped(to: grid)
+                }
             }
             .onEnded { _ in
-                defer { anchor = nil; highlight = nil }
-                guard enabled, let picked = highlight else { return }
-                onPick(picked)
+                let picked = highlight
+                let drag = windowDrag
+                let moved = travelled
+                anchor = nil; highlight = nil; windowDrag = nil; travelled = false
+                guard enabled, let picked else { return }
+                if let drag, moved {
+                    let occupant = occupants[drag.index]
+                    guard picked != occupant.cell.clamped(to: grid.clamped()) else { return }
+                    onMove?(occupant, picked)
+                } else if canPick {
+                    onPick(picked)
+                }
             }
     }
 
@@ -430,9 +482,12 @@ struct TesseraPopover: View {
                 MenuBarController.shared.setGrid(spec)
             }
             GridPicker(grid: model.grid, screenAspect: model.screenAspect,
-                       occupants: model.occupants, enabled: model.canPlace) { cell in
-                MenuBarController.shared.place(in: cell)
-            }
+                       occupants: model.occupants, enabled: model.trusted,
+                       canPick: model.canPlace,
+                       onPick: { cell in MenuBarController.shared.place(in: cell) },
+                       onMove: { occupant, cell in
+                           MenuBarController.shared.move(occupant, to: cell)
+                       })
             .frame(height: 96)
             .frame(maxWidth: .infinity)
             Text(mapNote)
@@ -452,9 +507,15 @@ struct TesseraPopover: View {
 
     private var mapNote: String {
         if !model.trusted { return tr("Accessibility access is needed to see the windows.") }
+        guard !model.occupants.isEmpty else {
+            return model.canPlace
+                ? String(format: tr("Click or drag to place %@."), model.appName ?? "")
+                : tr("Bring a window to the front to place it.")
+        }
         return model.canPlace
-            ? String(format: tr("Click or drag to place %@."), model.appName ?? "")
-            : tr("Bring a window to the front to place it.")
+            ? String(format: tr("Drag a window to move it. Click a cell to place %@."),
+                     model.appName ?? "")
+            : tr("Drag a window to move it.")
     }
 
     private var arrangeCard: some View {
@@ -631,6 +692,20 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         OverlayController.shared.flash(cell: cell, on: screen)
         AX.place(window, in: cell, on: screen)
         giveFocusBack(to: window)
+    }
+
+    /// Moves one window straight from the map. It is about that window, not the front one, and
+    /// you will often move another right after, so the popover stays open. The map is redrawn a
+    /// beat later: an app answers a write on its own run loop, and reading at once would draw
+    /// the window where it no longer is.
+    func move(_ occupant: AutoArrange.Occupant, to cell: CellRect) {
+        let screen = AX.screen(of: occupant.window)
+        OverlayController.shared.flash(cell: cell, on: screen)
+        AX.place(occupant.window, in: cell, on: screen)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self, self.popover.isShown else { return }
+            self.model.reload(window: self.capturedWindow)
+        }
     }
 
     func fitFocused() {

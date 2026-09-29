@@ -157,10 +157,74 @@ enum AutoArrange {
     /// Arranges the windows of one screen: work out every rectangle first, then set each
     /// window once.
     ///
+    /// Which window goes into which cell.
+    ///
+    /// The cells are settled and so is the set of windows: all that is left to choose is the
+    /// pairing, and the one that moves the windows least is the one that looks like the screen
+    /// tidying itself instead of reshuffling. Reading order is only where the search starts;
+    /// from there, swapping any two windows is tried until no swap shortens the total travel.
+    /// Distances are measured between centres, so a window already sitting on its cell stays.
+    static func pairing(current: [CGRect], targets: [CGRect]) -> [Int] {
+        precondition(current.count == targets.count)
+        var assignment = Array(current.indices)
+
+        func travel(_ window: Int, _ target: Int) -> CGFloat {
+            let a = CGPoint(x: current[window].midX, y: current[window].midY)
+            let b = CGPoint(x: targets[target].midX, y: targets[target].midY)
+            return hypot(a.x - b.x, a.y - b.y)
+        }
+
+        var improved = true
+        while improved {
+            improved = false
+            for i in assignment.indices {
+                for j in assignment.indices where j > i {
+                    let now = travel(i, assignment[i]) + travel(j, assignment[j])
+                    let swapped = travel(i, assignment[j]) + travel(j, assignment[i])
+                    // A strict improvement only: equal costs keep reading order, which is the
+                    // predictable answer when two windows are the same distance from two cells.
+                    if swapped < now - 0.5 {
+                        assignment.swapAt(i, j)
+                        improved = true
+                    }
+                }
+            }
+        }
+        return assignment
+    }
+
+    /// The moves an arrangement would make: which window into which cell, and the rectangle
+    /// that cell is. `apply` and `--diagnose` both go through here, so what the diagnostics
+    /// print is what would really happen — including the pairing.
+    static func moves(for windows: [ManagedWindow], on screen: NSScreen, grid: GridSpec,
+                      strategy: ArrangeStrategy)
+        -> [(window: ManagedWindow, cell: CellRect, target: CGRect)] {
+        let visible = screen.visibleFrame
+        let chosen = AX.sortedFrontToBack(windows).prefix(grid.cols * grid.rows)
+        // Reading order first, so the pairing starts from the predictable answer.
+        let ordered = chosen.sorted { a, b in
+            let fa = a.frame ?? CGRect.zero, fb = b.frame ?? CGRect.zero
+            return fa.minX == fb.minX ? fa.maxY > fb.maxY : fa.minX < fb.minX
+        }
+        let cells = partition(count: ordered.count, grid: grid,
+                              screenAspect: visible.width / visible.height, strategy: strategy,
+                              masterFraction: Store.shared.config.masterFraction)
+        let targets = cells.map { Geometry.frame(for: $0, in: grid, on: visible) }
+        let frames = ordered.map { $0.frame ?? CGRect.zero }
+        return pairing(current: frames, targets: targets).enumerated().map { index, target in
+            (window: ordered[index], cell: cells[target], target: targets[target])
+        }
+    }
+
     /// There is nothing to discover at run time. The screen size is known, the window count is
     /// known, so the grid and every target rectangle are known — the arrangement is a piece of
     /// arithmetic, not a negotiation. A window is written once and left alone; the read at the
     /// end is only for the report, and moves nothing.
+    ///
+    /// Every window is written back to back, without pausing between them: an app applies the
+    /// write on its own run loop and answers in its own time, and nothing here reads until they
+    /// have all been told. The one thing that must not happen is reading too early and
+    /// correcting on a stale answer — that is what used to cancel a resize in flight.
     ///
     /// The grid is also a promise about sizes: a 3×2 means six tiles, not "as many slivers as
     /// there are windows", so only the frontmost `cols × rows` windows are tiled and the rest
@@ -170,53 +234,84 @@ enum AutoArrange {
                       strategy: ArrangeStrategy) -> Int {
         let grid = refreshAutoGrid(on: screen)
         let visible = screen.visibleFrame
-        let chosen = AX.sortedFrontToBack(windows).prefix(grid.cols * grid.rows)
-        // Reading order, so each window ends up near where it already was.
-        let ordered = chosen.sorted { a, b in
-            let fa = a.frame ?? CGRect.zero, fb = b.frame ?? CGRect.zero
-            return fa.minX == fb.minX ? fa.maxY > fb.maxY : fa.minX < fb.minX
-        }
-        let cells = partition(count: ordered.count, grid: grid,
-                              screenAspect: visible.width / visible.height, strategy: strategy,
-                              masterFraction: Store.shared.config.masterFraction)
-        let moves = zip(ordered, cells).map { window, cell in
-            (window: window, target: Geometry.frame(for: cell, in: grid, on: visible))
-        }
+        let moves = moves(for: windows, on: screen, grid: grid, strategy: strategy)
 
         var errors: [String] = []
-        for (window, target) in moves {
-            // An app answers on its own run loop: two windows of the same app go through one
-            // process, and fired back to back it keeps the first and drops the rest. A pause
-            // too short to see is all it needs to keep up.
+        var before: [CGRect] = []
+        lastCorrections = 0
+        for (window, _, target) in moves {
             let current = window.frame ?? CGRect.zero
+            before.append(current)
             // A window filling the screen ignores a resize until it leaves that state.
             let fillsScreen = abs(current.width - visible.width) < 4
                 && abs(current.height - visible.height) < 4
             let result = AX.writeFrame(window.element, to: target, shrinkFirst: fillsScreen)
             errors.append("pos \(result.position.rawValue)/size \(result.size.rawValue)"
                           + " asked \(Int(target.width))×\(Int(target.height))")
-            usleep(80_000)
         }
 
-        // Everyone has been told once. After a moment to answer, a single corrective write goes
-        // only to the windows still far from their cell — a window keeping its own minimum size
-        // is within tolerance and is left alone.
-        usleep(250_000)
-        func missedIts(_ target: CGRect, _ window: AXUIElement) -> Bool {
-            guard let now = AX.frame(of: window) else { return false }
-            // Judged on the AX corner: a window that snaps to its own row height keeps that
-            // corner and only its bottom moves, so it is not chased for nothing.
-            let here = AX.toAX(now), there = AX.toAX(target)
-            return abs(here.minX - there.minX) > 4 || abs(here.minY - there.minY) > 4
-                || abs(here.width - there.width) > 24 || abs(here.height - there.height) > 24
+        func landed(_ index: Int) -> Bool {
+            guard let now = AX.frame(of: moves[index].window.element) else { return true }
+            let here = AX.toAX(now), there = AX.toAX(moves[index].target)
+            return abs(here.minX - there.minX) <= 4 && abs(here.minY - there.minY) <= 4
+                && abs(here.width - there.width) <= 24 && abs(here.height - there.height) <= 24
         }
-        var corrected = false
-        for (window, target) in moves where missedIts(target, window.element) {
-            AX.writeFrame(window.element, to: target)
-            usleep(80_000)
-            corrected = true
+
+        /// Whether a window has said its piece — landed, or taken the corner and kept its own
+        /// size, which is an app with a minimum larger than the cell and an answer, not a
+        /// failure. Only a window that did neither is worth writing to twice.
+        func settled(_ index: Int) -> Bool {
+            if landed(index) { return true }
+            guard let now = AX.frame(of: moves[index].window.element) else { return true }
+            let here = AX.toAX(now), there = AX.toAX(moves[index].target)
+            let corner = abs(here.minX - there.minX) <= 4 && abs(here.minY - there.minY) <= 4
+            let keptItsSize = abs(now.width - before[index].width) <= 2
+                && abs(now.height - before[index].height) <= 2
+            // Or it shrank as far as it goes and stopped: still bigger than the cell in the
+            // dimension it would not give up. Either way it answered, and writing again only
+            // asks the same question twice.
+            let shrankToItsMinimum = now.width > moves[index].target.width + 2
+                || now.height > moves[index].target.height + 2
+            return corner && (keptItsSize || shrankToItsMinimum)
         }
-        if corrected { usleep(250_000) }
+
+        // Everyone has been told once. Now wait for the answers — an app applies the write on
+        // its own run loop and takes its own time, and reading before it has is what used to
+        // make Tessera "correct" a move that was still in flight. Reading costs nothing and
+        // moves nothing, so this waits by looking: it stops the moment every window has
+        // answered, and gives up after a beat on the ones that never will.
+        for _ in 0..<8 {
+            usleep(90_000)
+            if moves.indices.allSatisfy(settled) { break }
+        }
+
+        // One retry, only for a window that neither moved nor resized: that is a write the app
+        // dropped, and a second one usually takes.
+        var retried = false
+        for index in moves.indices where !settled(index) {
+            AX.writeFrame(moves[index].window.element, to: moves[index].target)
+            lastCorrections += 1
+            retried = true
+        }
+        if retried { usleep(250_000) }
+
+        // What is left is an app that will not take the size of its cell. It keeps its size —
+        // that is its right — but it must not be left hanging off the edge of the screen, which
+        // is what happens when a window taller than its cell is hung from the cell's top-left.
+        // So: same size, the cell's top-left corner, slid back inside the visible area.
+        for index in moves.indices {
+            guard let now = AX.frame(of: moves[index].window.element), !landed(index) else { continue }
+            let target = moves[index].target
+            var rect = CGRect(x: target.minX, y: target.maxY - now.height,
+                              width: now.width, height: now.height)
+            rect.origin.x = min(max(rect.minX, visible.minX),
+                                max(visible.minX, visible.maxX - rect.width))
+            rect.origin.y = min(max(rect.minY, visible.minY),
+                                max(visible.minY, visible.maxY - rect.height))
+            guard abs(rect.minX - now.minX) > 2 || abs(rect.minY - now.minY) > 2 else { continue }
+            AX.writeFrame(moves[index].window.element, to: rect)
+        }
+        usleep(150_000)
 
         lastOutcomes = zip(moves, errors).map { move, error in
             let outcome = AX.inspect(move.window.element, against: move.target)
@@ -229,6 +324,10 @@ enum AutoArrange {
     }
 
     /// What happened to each window in the last arrangement, for `--arrange` to report.
+    /// How many windows needed the one corrective write on the last arrangement. Zero means
+    /// every window landed on the first try.
+    private(set) static var lastCorrections = 0
+
     private(set) static var lastOutcomes: [(app: String, outcome: AX.PlacementOutcome)] = []
 
     /// How many windows "arrange all" would move on this screen, and how many it would leave alone.
@@ -320,6 +419,8 @@ enum AutoArrange {
     /// behind the popover's live map. `resistant` marks the windows an arrangement cannot place
     /// exactly (a full-screen window, or one whose minimum size is bigger than its cell).
     struct Occupant {
+        /// The window itself, so the map can move this one and not the front one.
+        let window: ManagedWindow
         let appName: String
         let cell: CellRect
         let isFocused: Bool
@@ -334,7 +435,8 @@ enum AutoArrange {
             guard let frame = window.frame else { return nil }
             let cell = Geometry.nearestCell(for: frame, in: grid, on: screen.visibleFrame)
             let cellSize = Geometry.frame(for: cell, in: grid, on: screen.visibleFrame)
-            return Occupant(appName: window.appName,
+            return Occupant(window: window,
+                            appName: window.appName,
                             cell: cell,
                             isFocused: focused.map { CFEqual($0.element, window.element) } ?? false,
                             // Bigger than the cell it sits in, or past what the grid can tile.

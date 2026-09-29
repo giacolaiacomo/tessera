@@ -189,8 +189,13 @@ if flags.contains("frames") {
         }
         let cells = AutoArrange.partition(count: apps.count, grid: grid, screenAspect: aspect,
                                           strategy: .balanced, masterFraction: 0.6)
+        // The renderer has no Accessibility access: these windows point at nothing, and the
+        // map only ever draws their name and their cell.
+        let nowhere = ManagedWindow(element: AXUIElementCreateSystemWide(), pid: 0,
+                                    bundleID: "", appName: "", title: "")
         let occupants = zip(apps, cells).enumerated().map { index, pair in
-            AutoArrange.Occupant(appName: pair.0, cell: pair.1, isFocused: index == 0, resistant: false)
+            AutoArrange.Occupant(window: nowhere, appName: pair.0, cell: pair.1,
+                                 isFocused: index == 0, resistant: false)
         }
         print("state \(grid.cols)×\(grid.rows)\(auto ? " auto" : ""): "
               + cells.map { "(\($0.col),\($0.row) \($0.w)×\($0.h))" }.joined(separator: " "))

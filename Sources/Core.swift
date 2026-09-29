@@ -58,6 +58,10 @@ struct CellRect: Codable, Equatable, Hashable {
         return CellRect(col: c0, row: r0, w: abs(a.col - b.col) + 1, h: abs(a.row - b.row) + 1)
     }
 
+    func contains(col: Int, row: Int) -> Bool {
+        col >= self.col && col <= maxCol && row >= self.row && row <= maxRow
+    }
+
     func clamped(to grid: GridSpec) -> CellRect {
         let c = max(0, min(col, grid.cols - 1))
         let r = max(0, min(row, grid.rows - 1))
