@@ -44,7 +44,7 @@ Swift + AppKit/SwiftUI, nessuna dipendenza, build con `swiftc Sources/*.swift` (
 | 2026-09-29 | Preferenze (lotto delegato) | — | fatto | review mia: `HotkeyRecorder` ri-collega i binding in `updateNSView`, non più solo alla creazione; `autoenablesItems = false` sul menu, altrimenti AppKit riabilitava le voci senza permesso Accessibilità |
 | 2026-09-29 | Build `.app` + install.sh | — | fatto | ad-hoc sign; installare in `~/Applications` o macOS richiede di nuovo l'accesso Accessibilità |
 
-| 2026-09-29 | Round 2 dopo la prova di Gianluca | — | in corso | vedi sotto |
+| 2026-09-29 | Round 2 dopo la prova di Gianluca | 3214d68 + | fatto | motore, UI in stile Burny, logo; UI resa fuori schermo e guardata prima della consegna |
 
 ### Round 2 — cosa ha detto la prova su schermo vero
 
@@ -67,7 +67,14 @@ Bocciato: drag-to-zone («inguardabile, compare a ogni spostamento e mette 1×1�
 - **Nuova strategia «Una per cella»**: la griglia presa alla lettera (3×2 = sei riquadri anche con
   quattro finestre), perché «bilanciata» riempie sempre lo schermo e non era ciò che Gianluca si aspettava.
 - **`--diagnose`**: stampa schermi, griglie, finestre viste e la cella di destinazione, senza muovere nulla.
-- UI rifatta in stile Burny e logo disegnato con la skill indicata da Gianluca (lotti delegati).
+- **UI rifatta in stile Burny**: popover SwiftUI da 272 pt (prima un NSMenu con una griglia da 264 pt)
+  e Impostazioni da 360×520 pt (prima una finestra 780×560 con TabView), stessa scala tipografica di
+  Burny (10 / 10.5 / 11 / 12 / 13) e le stesse card.
+- **Logo** disegnato con la skill indicata da Gianluca (kaankiziltug/logo-design-skill): cinque tessere
+  di dimensioni diverse che girano attorno a un nucleo caldo; `assets/` ha SVG, palette e anteprime,
+  `Sources/Logo.swift` le ridisegna in AppKit (l'app non ha risorse esterne).
+- **`./scripts/render-ui.sh`**: rende popover e Impostazioni in PNG senza lanciare l'app, per
+  guardare una modifica di UI prima di spedirla.
 
 **Deviazioni dal piano:** `masterStack` non era rappresentabile quando la pila supera le righe della
 griglia; invece di stringere le finestre sotto la cella, ripiega sulla disposizione bilanciata.

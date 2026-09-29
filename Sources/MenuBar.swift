@@ -206,13 +206,16 @@ struct TesseraPopover: View {
                        note: untouchedNote, enabled: model.trusted) {
                 MenuBarController.shared.arrange(with: model.strategy)
             }
-            Menu("Sistema tutto con…") {
+            Menu {
                 ForEach(ArrangeStrategy.allCases, id: \.self) { strategy in
                     Button(strategy.label) { MenuBarController.shared.arrange(with: strategy) }
                 }
+            } label: {
+                // The font has to live on the label: a Menu ignores it from the outside.
+                Text("Sistema tutto con…").font(.system(size: 12))
             }
             .menuStyle(.borderlessButton)
-            .font(.system(size: 12))
+            .fixedSize()
             .disabled(!model.trusted)
             PopoverRow(title: "Sistema la finestra attiva", enabled: model.canPlace) {
                 MenuBarController.shared.fitFocused()
@@ -330,12 +333,20 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         let screen = AX.screen(of: window)
         OverlayController.shared.flash(cell: cell, on: screen)
         AX.place(window, in: cell, on: screen)
+        giveFocusBack(to: window)
     }
 
     func fitFocused() {
         defer { close() }
         guard let window = capturedWindow else { return }
         AutoArrange.fit(window)
+        giveFocusBack(to: window)
+    }
+
+    /// Opening the popover had to activate Tessera; hand the keyboard back to the app whose
+    /// window was just moved, or the user ends up typing into nothing.
+    private func giveFocusBack(to window: ManagedWindow) {
+        NSRunningApplication(processIdentifier: window.pid)?.activate()
     }
 
     func arrange(with strategy: ArrangeStrategy) {

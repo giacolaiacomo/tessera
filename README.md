@@ -30,6 +30,7 @@ spostare le finestre delle altre app. Per disinstallare: `./uninstall.sh`.
 ```sh
 ./scripts/test.sh              # controlli numerici sulla geometria della griglia
 ./scripts/build-app.sh         # build/Tessera.app
+./scripts/render-ui.sh         # popover e Impostazioni in PNG, senza lanciare l'app
 ~/Applications/Tessera.app/Contents/MacOS/Tessera --diagnose   # cosa vede e cosa farebbe, a secco
 ```
 
