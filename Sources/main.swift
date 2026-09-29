@@ -142,6 +142,7 @@ final class AppController {
 
     // MARK: Commands from the command line
 
+    static let settingsNotification = Notification.Name("sh.tessera.settings")
     static let exitFullScreenNotification = Notification.Name("sh.tessera.exitfullscreen")
     static let diagnoseNotification = Notification.Name("sh.tessera.diagnose")
     static let arrangeNotification = Notification.Name("sh.tessera.arrange")
@@ -156,6 +157,14 @@ final class AppController {
         center.addObserver(forName: Self.diagnoseNotification, object: nil, queue: .main) { _ in
             try? diagnosticsText().write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
                                         atomically: true, encoding: .utf8)
+        }
+        center.addObserver(forName: Self.settingsNotification, object: nil, queue: .main) { _ in
+            let controller = PreferencesWindowController.shared
+            let wasOpen = controller.isOpen
+            wasOpen ? controller.close() : controller.show()
+            let report = wasOpen ? "Impostazioni chiuse.\n" : "Impostazioni aperte.\n"
+            try? report.write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
+                              atomically: true, encoding: .utf8)
         }
         center.addObserver(forName: Self.exitFullScreenNotification, object: nil, queue: .main) { _ in
             let windows = AX.fullScreenWindows()
@@ -318,6 +327,11 @@ func askRunningApp(_ name: Notification.Name, strategy: String?) -> Bool {
 if arguments.contains("--diagnose") {
     // With the permission in hand (rare from a terminal) answer directly; otherwise ask the app.
     if AX.isTrusted { print(diagnosticsText()) } else { _ = askRunningApp(AppController.diagnoseNotification, strategy: nil) }
+    exit(0)
+}
+
+if arguments.contains("--settings") {
+    _ = askRunningApp(AppController.settingsNotification, strategy: nil)
     exit(0)
 }
 

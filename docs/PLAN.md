@@ -31,7 +31,7 @@ Swift + AppKit/SwiftUI, nessuna dipendenza, build con `swiftc Sources/*.swift` (
 
 ## Ledger
 
-**Next action:** Gianluca prova popover, hotkey e disposizioni salvate a mano (il motore è verificato dal vivo); poi decidere se limare la RAM (49 MB contro i 27 di Burny) e guardare drag-to-zone e "sistema tutto" su dati reali (Gianluca).
+**Next action:** Gianluca prova popover, hotkey e disposizioni salvate a mano (il motore è verificato dal vivo); sulla RAM non c'è altro da limare: misurata pari a Burny e guardare drag-to-zone e "sistema tutto" su dati reali (Gianluca).
 
 | Data | Compito | Commit | Verdetto | Note |
 |---|---|---|---|---|
@@ -103,6 +103,19 @@ che nessuna lettura del codice avrebbe trovato:
 Esito finale sull'Acer, strategia «Una per cella»: 3 finestre esatte, 1 con l'altezza imposta da
 Terminale (700 invece di 693, una riga di caratteri). Limiti veri e documentati nel README:
 dimensioni minime delle app, griglia dei caratteri di Terminale, finestre in fullscreen saltate.
+
+### Memoria — misurata, non stimata (2026-09-29)
+
+`vmmap --summary` (physical footprint, quello che mostra Monitoraggio Attività), non RSS:
+Tessera 28,8 MB contro i 27,9 MB di Burny, picco di avvio identico (92 MB, caricamento dei
+framework). La parte scrivibile davvero dell'app è ~7 MB residenti: tutto il resto è AppKit e
+Foundation nella dyld shared cache, condivise con ogni altra app.
+
+Riscrivere in Rust o Go non sposterebbe niente (Go peggiorerebbe: runtime e GC in più, AppKit
+comunque linkato). Provata e **scartata** l'ottimizzazione «butta la finestra Impostazioni alla
+chiusura»: protocollo identico sulle due build, 29,4 MB contro 29,6 MB a 45 s dalla chiusura.
+Chiudere una finestra libera già backing store e layer; l'albero di view che resta pesa rumore.
+Resta il comando `--settings` (apre/chiude le Impostazioni da terminale), nato per quella misura.
 
 **Deviazioni dal piano:** `masterStack` non era rappresentabile quando la pila supera le righe della
 griglia; invece di stringere le finestre sotto la cella, ripiega sulla disposizione bilanciata.
