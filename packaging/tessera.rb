@@ -31,6 +31,6 @@ class Tessera < Formula
     # --icon draws the app icon offscreen and exits, so it needs no Accessibility access.
     # (--diagnose would: it talks to the running, authorised app.)
     system bin/"tessera", "--icon", testpath/"icon.png", "128"
-    assert_predicate testpath/"icon.png", :exist?
+    assert_path_exists testpath/"icon.png"
   end
 end
