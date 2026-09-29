@@ -161,6 +161,7 @@ final class AppController {
     static let exitFullScreenNotification = Notification.Name("sh.tessera.exitfullscreen")
     static let diagnoseNotification = Notification.Name("sh.tessera.diagnose")
     static let arrangeNotification = Notification.Name("sh.tessera.arrange")
+    static let placeNotification = Notification.Name("sh.tessera.place")
 
     static var supportDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -207,6 +208,29 @@ final class AppController {
                          restored.joined(separator: ", "))) + "\n"
             try? report.write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
                               atomically: true, encoding: .utf8)
+        }
+        center.addObserver(forName: Self.placeNotification, object: nil, queue: .main) { note in
+            // "col,row,w,h;screen" — the front window into one rectangle of the grid.
+            let parts = (note.object as? String)?.components(separatedBy: ";") ?? []
+            let numbers = (parts.first ?? "").split(separator: ",").compactMap { Int($0) }
+            let report: String
+            if numbers.count < 2 {
+                report = tr("Usage: --place col,row[,width,height] [--screen name]")
+            } else if let window = AX.focusedWindow() {
+                let cell = CellRect(col: numbers[0], row: numbers[1],
+                                    w: numbers.count > 2 ? numbers[2] : 1,
+                                    h: numbers.count > 3 ? numbers[3] : 1)
+                let screen = parts.count > 1 && !parts[1].isEmpty
+                    ? AppController.screen(matching: parts[1]) : AX.screen(of: window)
+                let grid = Store.shared.config.grid(for: screen.tesseraKey)
+                AX.place(window, in: cell.clamped(to: grid), on: screen)
+                report = String(format: tr("%@ placed in col %d row %d %d×%d."),
+                                window.appName, cell.col, cell.row, cell.w, cell.h)
+            } else {
+                report = tr("No window is in front.")
+            }
+            try? (report + "\n").write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
+                                       atomically: true, encoding: .utf8)
         }
         center.addObserver(forName: Self.arrangeNotification, object: nil, queue: .main) { [weak self] note in
             // The command line packs "strategy;screen" into the one string a distributed
@@ -370,6 +394,13 @@ func askRunningApp(_ name: Notification.Name, strategy: String?) -> Bool {
     }
     print(tr("Tessera did not answer within 4 seconds."))
     return false
+}
+
+if let index = arguments.firstIndex(of: "--place"), arguments.count > index + 1 {
+    let screenIndex = arguments.firstIndex(of: "--screen")
+    let screen = screenIndex.flatMap { arguments.count > $0 + 1 ? arguments[$0 + 1] : nil } ?? ""
+    _ = askRunningApp(AppController.placeNotification, strategy: "\(arguments[index + 1]);\(screen)")
+    exit(0)
 }
 
 if arguments.contains("--diagnose") {

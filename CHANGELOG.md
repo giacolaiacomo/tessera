@@ -6,7 +6,13 @@
   click away, with the arrangement named in a picker instead of hidden behind an icon. Picking an
   arrangement makes it the default and applies it.
 - **Move one window from the map**: drag its tile to another cell. That window moves, not the
-  front one, and the popover stays open.
+  front one, and the popover stays open. Hold ⌥ while dragging to give it a rectangle of cells
+  instead of keeping its size. Windows an app will not resize drag like any other — before, they
+  could not be dragged at all, and the gesture silently moved the front window instead.
+- **`--place col,row[,w,h]`**: the front window into one rectangle of the grid, from the command
+  line.
+- A single placement (map, zone hotkey, `--place`) also keeps a window that refuses to shrink
+  inside the screen, instead of hanging it off the edge.
 - **The pairing of windows to cells now minimises movement**: a window already on its cell stays
   there instead of swapping with a neighbour. `--diagnose` shows the same pairing an arrangement
   would use.

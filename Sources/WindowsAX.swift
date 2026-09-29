@@ -305,7 +305,24 @@ enum AX {
         let fillsScreen = abs(current.width - screen.visibleFrame.width) < 4
             && abs(current.height - screen.visibleFrame.height) < 4
         writeFrame(window.element, to: target, shrinkFirst: fillsScreen)
+        keepOnScreen(window.element, hungFrom: target, within: screen.visibleFrame)
         return true
+    }
+
+    /// An app with a minimum size larger than the cell keeps its size — its right — but hung
+    /// from the cell's top-left corner it then sticks out past the edge of the screen, which is
+    /// no use to anybody. Same size, same corner, slid back inside. The read happens after a
+    /// beat, because an app answers a write on its own run loop and not before.
+    static func keepOnScreen(_ window: AXUIElement, hungFrom target: CGRect, within visible: CGRect) {
+        usleep(120_000)
+        guard let now = frame(of: window) else { return }
+        guard now.minX < visible.minX - 1 || now.minY < visible.minY - 1
+                || now.maxX > visible.maxX + 1 || now.maxY > visible.maxY + 1 else { return }
+        var rect = CGRect(x: target.minX, y: target.maxY - now.height,
+                          width: now.width, height: now.height)
+        rect.origin.x = min(max(rect.minX, visible.minX), max(visible.minX, visible.maxX - rect.width))
+        rect.origin.y = min(max(rect.minY, visible.minY), max(visible.minY, visible.maxY - rect.height))
+        writeFrame(window, to: rect)
     }
 
     /// The screen a window mostly sits on.

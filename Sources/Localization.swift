@@ -51,9 +51,9 @@ let italian: [String: String] = [
     "%d dashed windows won't fit exactly": "%d tratteggiate non si piazzano esatte",
     "Accessibility access is needed to see the windows.":
         "Serve l'accesso Accessibilità per vedere le finestre.",
-    "Drag a window to move it. Click a cell to place %@.":
-        "Trascina una finestra per spostarla. Clicca una cella per piazzare %@.",
-    "Drag a window to move it.": "Trascina una finestra per spostarla.",
+    "Drag a window to move it, hold ⌥ to give it more cells.":
+        "Trascina una finestra per spostarla, tieni ⌥ per darle più celle.",
+    "Click a cell to place %@.": "Clicca una cella per piazzare %@.",
     "Click or drag to place %@.": "Clic o trascina per piazzare %@.",
     "Bring a window to the front to place it.": "Porta davanti una finestra per poterla piazzare.",
     "Arrange all": "Sistema tutto",
@@ -138,6 +138,10 @@ let italian: [String: String] = [
         "Schermo %@: griglia %d×%d dalle finestre aperte, sistemate %d.",
     "1 window needed a second nudge.": "1 finestra ha avuto bisogno di una seconda spinta.",
     "%d windows needed a second nudge.": "%d finestre hanno avuto bisogno di una seconda spinta.",
+    "Usage: --place col,row[,width,height] [--screen name]":
+        "Uso: --place colonna,riga[,larghezza,altezza] [--screen nome]",
+    "%@ placed in col %d row %d %d×%d.": "%@ piazzata in col %d riga %d %d×%d.",
+    "No window is in front.": "Nessuna finestra in primo piano.",
     "Popover closed.": "Popover chiuso.",
     "Settings open in the popover.": "Impostazioni aperte nel popover.",
     "No window is in full screen.": "Nessuna finestra a tutto schermo.",

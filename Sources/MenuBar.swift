@@ -117,6 +117,9 @@ struct GridPicker: View {
         let index: Int
         let colOffset: Int
         let rowOffset: Int
+        /// Where the press landed, which is where an ⌥-drag starts measuring its rectangle.
+        let pressCol: Int
+        let pressRow: Int
     }
 
     @State private var anchor: CellRect?
@@ -198,14 +201,19 @@ struct GridPicker: View {
                 let current = cell(at: value.location, in: size)
                 let g = grid.clamped()
                 if anchor == nil && windowDrag == nil {
+                    // Front to back, so the tile drawn on top is the one picked up — including
+                    // a dashed one: a window that cannot take the size of its cell can still be
+                    // moved, and refusing to drag it is how it used to fall through to the
+                    // sweep and move the front window instead.
                     let held = occupants.firstIndex {
-                        !$0.resistant && $0.cell.clamped(to: g).contains(col: current.col, row: current.row)
+                        $0.cell.clamped(to: g).contains(col: current.col, row: current.row)
                     }
                     if let held, onMove != nil {
                         let cell = occupants[held].cell.clamped(to: g)
                         windowDrag = WindowDrag(index: held,
                                                 colOffset: current.col - cell.col,
-                                                rowOffset: current.row - cell.row)
+                                                rowOffset: current.row - cell.row,
+                                                pressCol: current.col, pressRow: current.row)
                     } else {
                         anchor = CellRect(col: current.col, row: current.row)
                     }
@@ -214,10 +222,17 @@ struct GridPicker: View {
                     travelled = true
                 }
                 if let drag = windowDrag {
-                    let cell = occupants[drag.index].cell.clamped(to: g)
-                    let col = min(max(0, current.col - drag.colOffset), max(0, g.cols - cell.w))
-                    let row = min(max(0, current.row - drag.rowOffset), max(0, g.rows - cell.h))
-                    highlight = CellRect(col: col, row: row, w: cell.w, h: cell.h)
+                    if NSEvent.modifierFlags.contains(.option) {
+                        // Hold ⌥ and the window takes the rectangle you sweep instead of
+                        // keeping its own size: that is how a window becomes a tall column.
+                        highlight = CellRect.spanning((drag.pressCol, drag.pressRow), current)
+                            .clamped(to: grid)
+                    } else {
+                        let cell = occupants[drag.index].cell.clamped(to: g)
+                        let col = min(max(0, current.col - drag.colOffset), max(0, g.cols - cell.w))
+                        let row = min(max(0, current.row - drag.rowOffset), max(0, g.rows - cell.h))
+                        highlight = CellRect(col: col, row: row, w: cell.w, h: cell.h)
+                    }
                 } else if let start = anchor {
                     highlight = CellRect.spanning((start.col, start.row), current).clamped(to: grid)
                 }
@@ -512,10 +527,9 @@ struct TesseraPopover: View {
                 ? String(format: tr("Click or drag to place %@."), model.appName ?? "")
                 : tr("Bring a window to the front to place it.")
         }
-        return model.canPlace
-            ? String(format: tr("Drag a window to move it. Click a cell to place %@."),
-                     model.appName ?? "")
-            : tr("Drag a window to move it.")
+        let dragging = tr("Drag a window to move it, hold ⌥ to give it more cells.")
+        guard model.canPlace else { return dragging }
+        return dragging + " " + String(format: tr("Click a cell to place %@."), model.appName ?? "")
     }
 
     private var arrangeCard: some View {

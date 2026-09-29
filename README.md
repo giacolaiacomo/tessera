@@ -101,7 +101,9 @@ app and macOS asks again.
 are the quick grid presets, **Arrange all**, and the pages for zones, layouts and settings.
 
 - **Move one window:** drag its tile on the map to another cell. That window moves, not the front
-  one, and the popover stays open so you can move the next one.
+  one, and the popover stays open so you can move the next one. Hold **⌥** while dragging to give
+  it a rectangle of cells instead of keeping its size — that is how a window becomes a tall column.
+  A dashed tile (an app that cannot take the size of its cell) drags like any other.
 - **Place the front window:** click a cell, or drag across a rectangle of cells starting from an
   empty one.
 - **Pick a grid:** tap a preset (2×1, 3×1, 4×1, 3×2, 4×2) or set columns and rows with the
@@ -123,6 +125,7 @@ $T --diagnose                       # what it sees and what it would do — move
 $T --arrange balanced               # arrange the screen under the pointer
 $T --arrange cells --screen Acer     # a chosen arrangement, on a chosen screen
 $T --fit-grid --screen Acer          # pick the grid from the open windows, then tile them all
+$T --place 2,0,1,2                   # the front window into a rectangle of cells: col,row,w,h
 $T --exit-fullscreen                 # bring full-screen windows back to the Desktop
 $T --icon icon.png 512               # draw the app icon (the only command that needs no permission)
 ```
