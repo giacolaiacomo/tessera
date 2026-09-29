@@ -184,32 +184,42 @@ func chips(_ labels: [String], at p: NSPoint, size: CGFloat = 15, maxWidth: CGFl
 // MARK: - hero.png
 
 let heroPopover = load(darkDir, "popover.png")
-let heroScale: CGFloat = 0.88   // 601 pt of popover has to fit under a 28 pt menu bar in 640
 
-canvas(1280, 640, "hero.png") { r in
-    darkBackground(r)
-    let popW = heroPopover.size.width * heroScale
-    let popX = r.width - popW - 72
-    let item = menuBar(r, itemRight: popX + popW / 2 + 17)
-    panel(heroPopover, at: NSPoint(x: popX, y: 28 + 12), scale: heroScale, dark: true)
-    // The thread from the status item down to the popover it opened.
-    rgb(0xFFFFFF, 0.22).setStroke()
-    let thread = NSBezierPath()
-    thread.move(to: NSPoint(x: item.midX, y: item.maxY))
-    thread.line(to: NSPoint(x: item.midX, y: 40))
-    thread.lineWidth = 1
-    thread.stroke()
+/// The hero, at whatever height the canvas is: 720 for the README, 640 for the social card.
+/// The popover is scaled to hang under the menu bar with room to spare however tall it grows,
+/// and the brand block is centred against it as one lump.
+func heroCanvas(_ name: String, height h: CGFloat) {
+    let scale = min(0.90, (h - 40 - 44) / heroPopover.size.height)
+    let blockHeight: CGFloat = 459
+    let top = ((h - blockHeight) / 2).rounded()
+    canvas(1280, h, name) { r in
+        darkBackground(r)
+        let popW = heroPopover.size.width * scale
+        let popX = r.width - popW - 72
+        let item = menuBar(r, itemRight: popX + popW / 2 + 17)
+        panel(heroPopover, at: NSPoint(x: popX, y: 28 + 12), scale: scale, dark: true)
+        // The thread from the status item down to the popover it opened.
+        rgb(0xFFFFFF, 0.22).setStroke()
+        let thread = NSBezierPath()
+        thread.move(to: NSPoint(x: item.midX, y: item.maxY))
+        thread.line(to: NSPoint(x: item.midX, y: 40))
+        thread.lineWidth = 1
+        thread.stroke()
 
-    drawImage(icon, in: NSRect(x: 80, y: 88, width: 152, height: 152))
-    text("Tessera", at: NSPoint(x: 96, y: 252), size: 84, weight: .heavy)
-    text("Your windows, on a grid you choose.", at: NSPoint(x: 96, y: 376),
-         size: 30, weight: .medium, color: NSColor.white.withAlphaComponent(0.82), width: 820)
-    text("A menu bar app for macOS. A grid per screen, up to 32×32, and every window\nsnapped onto it in one click.",
-         at: NSPoint(x: 96, y: 432), size: 19, weight: .regular,
-         color: NSColor.white.withAlphaComponent(0.58), width: 800)
-    chips(["A grid per screen · fixed or automatic", "Five arrangements", "No network, no telemetry"],
-          at: NSPoint(x: 96, y: 516), maxWidth: 820)
+        drawImage(icon, in: NSRect(x: 80, y: top, width: 152, height: 152))
+        text("Tessera", at: NSPoint(x: 96, y: top + 164), size: 84, weight: .heavy)
+        text("Your windows, on a grid you choose.", at: NSPoint(x: 96, y: top + 288),
+             size: 30, weight: .medium, color: NSColor.white.withAlphaComponent(0.82), width: 820)
+        text("A menu bar app for macOS. A grid per screen, up to 32×32, every window snapped\nonto it — or dragged to another cell on the map.",
+             at: NSPoint(x: 96, y: top + 344), size: 19, weight: .regular,
+             color: NSColor.white.withAlphaComponent(0.58), width: 800)
+        chips(["A grid per screen · fixed or automatic", "Drag a window to another cell", "No network, no telemetry"],
+              at: NSPoint(x: 96, y: top + 428), maxWidth: 820)
+    }
 }
+
+heroCanvas("hero.png", height: 720)
+heroCanvas("social.png", height: 640)   // GitHub's card is 1280×640 and nothing else
 
 // MARK: - screens.png
 
@@ -242,21 +252,39 @@ canvas(1280, 56 + tallest + 84, "screens.png") { r in
     }
 }
 
-// MARK: - frames/ — picking a grid, and the windows following
 
-let states = (0...2).map { load(darkDir, "frames/state-\($0).png") }
-// Which preset chip is lit in each state: 4×1 is the fourth chip, 3×2 the fifth, Auto the first.
-// GridChips lays out Auto + four presets as equal columns inside the card, so the centres are
-// arithmetic: the card's inner width is 272 − 2×14 (popover padding) − 2×9 (card padding) = 226,
-// five chips with 4 pt gaps → 42 pt each. Checked against the rendered PNGs.
-let chipIndex = [3, 4, 0]
+// MARK: - frames/ — act one, the grid presets; act two, dragging a window on the map
+
+// The ten states Tests/RenderUI.swift renders. 0–2 are the grids; 3–5 are the forward drag
+// (the same 2×2, with the destination cell lit exactly as GridPicker lights it); 6 is after
+// the drop, Safari and Preview having swapped; 7–9 are the drag back.
+let states = (0...9).map { load(darkDir, "frames/state-\($0).png") }
+
+// Geometry inside the card, in its own points, checked against the rendered PNGs.
+// GridChips lays out Auto + four presets as equal columns: the card's inner width is
+// 272 − 2×14 (popover padding) − 2×9 (card padding) = 226, five chips with 4 pt gaps → 42 pt
+// each, so centres are 44 + 46·i. The map is 96 pt tall and, at 21:9, 224 pt wide, and it
+// starts 100 pt down: below the screen line, the chips row and their two 7 pt gaps.
 func chipCentre(_ index: Int) -> NSPoint { NSPoint(x: 44 + 46 * CGFloat(index), y: 83.5) }
+let mapOrigin = NSPoint(x: 24, y: 100), mapSize = NSSize(width: 224, height: 96)
+let demoGrid = (cols: 2, rows: 2)   // the grid the drag act happens on: the automatic one
+func cellCentre(_ col: Int, _ row: Int) -> NSPoint {
+    NSPoint(x: mapOrigin.x + (CGFloat(col) + 0.5) * mapSize.width / CGFloat(demoGrid.cols),
+            y: mapOrigin.y + (CGFloat(row) + 0.5) * mapSize.height / CGFloat(demoGrid.rows))
+}
+func cellUnder(_ p: NSPoint) -> (col: Int, row: Int) {
+    let col = Int((p.x - mapOrigin.x) / (mapSize.width / CGFloat(demoGrid.cols)))
+    let row = Int((p.y - mapOrigin.y) / (mapSize.height / CGFloat(demoGrid.rows)))
+    return (min(max(col, 0), demoGrid.cols - 1), min(max(row, 0), demoGrid.rows - 1))
+}
 
-let subtitles = [
+let gridLines = [
     "4×1 — four columns across the ultrawide.",
     "3×2 — six cells, and four windows spread over them.",
     "Auto — the grid follows how many windows are open.",
 ]
+let dragLine = "Drag a window on the map and that window moves."
+let swapLine = "Drop it on one already there and the two swap."
 
 let frameDir = out.appendingPathComponent("frames")
 try? FileManager.default.createDirectory(at: frameDir, withIntermediateDirectories: true)
@@ -265,15 +293,16 @@ let W: CGFloat = 1000, H: CGFloat = 520
 let cardScale: CGFloat = 1.4
 let cardSize = NSSize(width: states[0].size.width * cardScale, height: states[0].size.height * cardScale)
 let cardOrigin = NSPoint(x: W - cardSize.width - 60, y: 40)
-func chipPoint(_ index: Int) -> NSPoint {
-    let c = chipCentre(index)
-    return NSPoint(x: cardOrigin.x + c.x * cardScale, y: cardOrigin.y + c.y * cardScale)
+/// A point in the card's own coordinates, on the canvas.
+func onCard(_ p: NSPoint) -> NSPoint {
+    NSPoint(x: cardOrigin.x + p.x * cardScale, y: cardOrigin.y + p.y * cardScale)
 }
 let idle = NSPoint(x: 470, y: 430)
 
 var frameNo = 0
 
-func drawFrame(cursor: NSPoint, click: CGFloat, from: Int, to: Int, mix: CGFloat) {
+func drawFrame(cursor: NSPoint, click: CGFloat, from: Int, to: Int, mix: CGFloat,
+               subFrom: String, subTo: String, subMix: CGFloat) {
     canvas(W, H, String(format: "frames/f%04d.png", frameNo), scale: 1) { r in
         darkBackground(r)
         menuBar(r, itemRight: cardOrigin.x + cardSize.width / 2 + 17)
@@ -281,12 +310,12 @@ func drawFrame(cursor: NSPoint, click: CGFloat, from: Int, to: Int, mix: CGFloat
         if mix > 0.01 { panel(states[to], at: cardOrigin, scale: cardScale, dark: true, alpha: mix) }
 
         drawImage(icon, in: NSRect(x: 52, y: 62, width: 92, height: 92))
-        text("Pick a grid.\nThe windows follow.", at: NSPoint(x: 56, y: 178), size: 38, weight: .heavy, width: 460)
+        text("Pick a grid.\nMove a window.", at: NSPoint(x: 56, y: 178), size: 38, weight: .heavy, width: 460)
         // One line at a time: two sentences crossfading on top of each other is unreadable.
-        // The old one fades out, the new one fades in.
-        let line = mix < 0.5 ? from : to
-        let lineAlpha = mix < 0.5 ? 1 - mix * 2 : mix * 2 - 1
-        text(subtitles[line], at: NSPoint(x: 56, y: 312), size: 19, weight: .medium,
+        // The old one fades out, the new one fades in; an unchanged line never dips.
+        let line = subMix < 0.5 ? subFrom : subTo
+        let lineAlpha = subFrom == subTo ? 1 : (subMix < 0.5 ? 1 - subMix * 2 : subMix * 2 - 1)
+        text(line, at: NSPoint(x: 56, y: 312), size: 19, weight: .medium,
              color: NSColor.white.withAlphaComponent(0.78 * lineAlpha), width: 430)
         chips(["No network, no telemetry"], at: NSPoint(x: 56, y: H - 92), size: 14, maxWidth: 430)
 
@@ -321,33 +350,82 @@ func drawFrame(cursor: NSPoint, click: CGFloat, from: Int, to: Int, mix: CGFloat
 
 func ease(_ t: CGFloat) -> CGFloat { t * t * (3 - 2 * t) }
 
-func hold(_ n: Int, at cursor: NSPoint, state: Int) {
-    for _ in 0..<n { drawFrame(cursor: cursor, click: 0, from: state, to: state, mix: 0) }
+/// Where the animation is right now: the cursor, the state on screen and the line under the title.
+var cursor = idle, state = 0, subtitle = gridLines[0]
+
+func hold(_ n: Int) {
+    for _ in 0..<n {
+        drawFrame(cursor: cursor, click: 0, from: state, to: state, mix: 0,
+                  subFrom: subtitle, subTo: subtitle, subMix: 0)
+    }
 }
-func move(from a: NSPoint, to b: NSPoint, frames n: Int, state: Int) {
+func move(to target: NSPoint, frames n: Int) {
+    let start = cursor
     for i in 1...n {
         let t = ease(CGFloat(i) / CGFloat(n))
-        drawFrame(cursor: NSPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t),
-                  click: 0, from: state, to: state, mix: 0)
+        cursor = NSPoint(x: start.x + (target.x - start.x) * t, y: start.y + (target.y - start.y) * t)
+        drawFrame(cursor: cursor, click: 0, from: state, to: state, mix: 0,
+                  subFrom: subtitle, subTo: subtitle, subMix: 0)
     }
+    cursor = target
 }
-/// A click on a preset chip: the ripple and the crossfade to the state it produces.
-func click(at p: NSPoint, from: Int, to: Int, fade: Int, then holdFrames: Int) {
-    for i in 1...fade {
-        let t = CGFloat(i) / CGFloat(fade)
-        drawFrame(cursor: p, click: min(1, t * 1.4), from: from, to: to, mix: ease(t))
+/// A press or a release: the ripple, and the card dissolving into what the app would then show.
+func act(to next: Int, saying line: String, frames n: Int) {
+    let was = state, wasLine = subtitle
+    for i in 1...n {
+        let t = CGFloat(i) / CGFloat(n)
+        drawFrame(cursor: cursor, click: min(1, t * 1.4), from: was, to: next, mix: ease(t),
+                  subFrom: wasLine, subTo: line, subMix: ease(t))
     }
-    hold(holdFrames, at: p, state: to)
+    state = next
+    subtitle = line
+}
+/// One leg of a drag: the cursor slides and the card is always the state whose lit cell is the
+/// one under the pointer, which is how GridPicker tracks a drag.
+func dragLeg(to target: NSPoint, frames n: Int, states cellStates: [String: Int]) {
+    let start = cursor
+    for i in 1...n {
+        let t = ease(CGFloat(i) / CGFloat(n))
+        cursor = NSPoint(x: start.x + (target.x - start.x) * t, y: start.y + (target.y - start.y) * t)
+        let card = cellUnder(NSPoint(x: (cursor.x - cardOrigin.x) / cardScale,
+                                     y: (cursor.y - cardOrigin.y) / cardScale))
+        state = cellStates["\(card.col),\(card.row)"] ?? state
+        drawFrame(cursor: cursor, click: 0, from: state, to: state, mix: 0,
+                  subFrom: subtitle, subTo: subtitle, subMix: 0)
+    }
+    cursor = target
 }
 
-// 10 fps. Starts on 4×1, clicks 3×2, clicks Auto, clicks back to 4×1, and returns to rest.
-hold(7, at: idle, state: 0)
-move(from: idle, to: chipPoint(chipIndex[1]), frames: 7, state: 0)
-click(at: chipPoint(chipIndex[1]), from: 0, to: 1, fade: 4, then: 15)
-move(from: chipPoint(chipIndex[1]), to: chipPoint(chipIndex[2]), frames: 6, state: 1)
-click(at: chipPoint(chipIndex[2]), from: 1, to: 2, fade: 4, then: 15)
-move(from: chipPoint(chipIndex[2]), to: chipPoint(chipIndex[0]), frames: 6, state: 2)
-click(at: chipPoint(chipIndex[0]), from: 2, to: 0, fade: 4, then: 8)
-move(from: chipPoint(chipIndex[0]), to: idle, frames: 6, state: 0)
+// 10 fps.
+// Act one — the presets: 4×1, then 3×2, then Auto.
+hold(5)
+move(to: onCard(chipCentre(4)), frames: 5)            // the 3×2 chip
+act(to: 1, saying: gridLines[1], frames: 4)
+hold(8)
+move(to: onCard(chipCentre(0)), frames: 5)            // the Auto chip
+act(to: 2, saying: gridLines[2], frames: 4)
+hold(8)
+
+// Act two — dragging Safari from the top-left cell onto Preview, bottom-right, and back.
+let forward = ["0,0": 3, "1,0": 4, "1,1": 5, "0,1": 3]
+let backward = ["1,1": 7, "0,1": 8, "0,0": 9, "1,0": 7]
+move(to: onCard(cellCentre(0, 0)), frames: 6)
+act(to: 3, saying: dragLine, frames: 3)               // press on Safari
+hold(2)
+dragLeg(to: onCard(cellCentre(1, 0)), frames: 5, states: forward)
+dragLeg(to: onCard(cellCentre(1, 1)), frames: 5, states: forward)
+act(to: 6, saying: swapLine, frames: 3)               // release: the two swap
+hold(11)
+act(to: 7, saying: swapLine, frames: 2)               // press on Safari where it landed
+dragLeg(to: onCard(cellCentre(0, 1)), frames: 4, states: backward)
+dragLeg(to: onCard(cellCentre(0, 0)), frames: 4, states: backward)
+act(to: 2, saying: swapLine, frames: 2)               // release: back where they started
+hold(5)
+
+// Back to the opening state, so the loop joins.
+move(to: onCard(chipCentre(3)), frames: 6)            // the 4×1 chip
+act(to: 0, saying: gridLines[0], frames: 4)
+hold(5)
+move(to: idle, frames: 5)
 
 print("✓ hero.png, screens.png and \(frameNo) frames → \(out.path)")

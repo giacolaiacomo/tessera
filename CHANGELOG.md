@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.1 — 2026-09-29
+
+- **Fixed: Tessera would not compile with Swift 6.4**, so `brew install` failed on an up-to-date
+  Mac with the error `cannot assign to property: 'self' is immutable` in `MenuBar.swift`. The
+  drag gesture kept its state in `@State` properties, which it assigned from inside the gesture's
+  closures; Swift 6.2 accepts that, 6.4 refuses it. The gesture's state now lives in a small
+  observable object, which is not a question either compiler has to answer.
+- **While you drag a window over a cell that is already taken, you can see the swap before you
+  let go**: the window that would move out is drawn, faded and named, in the cell you are
+  emptying.
+
 ## 1.1.0 — 2026-09-29
 
 - **Tessera learns how small each app goes** and stops proposing cells they cannot use. A window

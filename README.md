@@ -111,7 +111,8 @@ are the quick grid presets, **Arrange all**, and the pages for zones, layouts an
   one, and the popover stays open so you can move the next one. Hold **⌥** while dragging to give
   it a rectangle of cells instead of keeping its size — that is how a window becomes a tall column.
   A dashed tile (an app that cannot take the size of its cell) drags like any other. Dropping a
-  window where another one already sits **swaps** them: the one that was there takes the cell you
+  window where another one already sits **swaps** them — you see which window is about to move out,
+  faded in the cell you are emptying, before you let go. The one that was there takes the cell you
   just left.
 - **Place the front window:** click a cell, or drag across a rectangle of cells starting from an
   empty one.

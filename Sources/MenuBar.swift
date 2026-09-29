@@ -113,10 +113,13 @@ struct GridPicker: View {
     var canPick = true
     let onPick: (CellRect) -> Void
     var onMove: ((AutoArrange.Occupant, CellRect) -> Void)?
+    /// A drag staged from outside, for the documentation renderer: the same feedback a real
+    /// drag draws, without a mouse. Nothing in the app sets this.
+    var previewDrag: (index: Int, cell: CellRect)?
 
     /// A window picked up from the map: which one, and where inside it the drag started, so it
     /// follows the pointer by the corner you grabbed rather than jumping under it.
-    private struct WindowDrag {
+    struct WindowDrag {
         let index: Int
         let colOffset: Int
         let rowOffset: Int
@@ -125,16 +128,36 @@ struct GridPicker: View {
         let pressRow: Int
     }
 
-    @State private var anchor: CellRect?
-    @State private var highlight: CellRect?
-    @State private var windowDrag: WindowDrag?
-    @State private var travelled = false
+    /// What the gesture is doing right now, kept in an object rather than in `@State`
+    /// properties of the view.
+    ///
+    /// Writing to `@State` from inside a gesture closure only works because the wrapper's
+    /// setter happens to be `nonmutating`, and that is thin ice: Swift 6.4 refuses it outright
+    /// — "cannot assign to property: 'self' is immutable" — where 6.2 compiles it without a
+    /// word. That is not a theory, it is how the Homebrew build failed on somebody else's Mac
+    /// the day after the release. Changing a field of a reference never touches `self`, so no
+    /// compiler has an opinion about it.
+    final class DragState: ObservableObject {
+        @Published var anchor: CellRect?
+        @Published var highlight: CellRect?
+        @Published var window: WindowDrag?
+        @Published var travelled = false
+
+        func reset() {
+            anchor = nil
+            highlight = nil
+            window = nil
+            travelled = false
+        }
+    }
+
+    @StateObject private var drag = DragState()
 
     var body: some View {
         GeometryReader { geometry in
             Canvas { context, size in draw(in: context, size: size) }
                 .contentShape(Rectangle())
-                .gesture(drag(in: geometry.size))
+                .gesture(dragGesture(in: geometry.size))
         }
         .aspectRatio(screenAspect, contentMode: .fit)
     }
@@ -152,44 +175,82 @@ struct GridPicker: View {
                              with: .color(.primary.opacity(0.10)))
             }
         }
+        // A window being dragged: which one, and where it is headed.
+        let carried = drag.window.map { (index: $0.index, cell: drag.highlight) } ?? previewDrag
+            .map { (index: $0.index, cell: Optional($0.cell)) }
+
         // Back to front, so the active window ends up on top of whatever it overlaps.
-        for occupant in occupants.reversed() {
-            draw(occupant, in: context, cellW: cellW, cellH: cellH, inset: inset)
+        for (index, occupant) in occupants.enumerated().reversed() {
+            // The one in hand leaves a ghost behind, so you can see where it is coming from.
+            let ghost = carried?.index == index
+            draw(occupant, in: context, cellW: cellW, cellH: cellH, inset: inset,
+                 opacity: ghost ? 0.22 : 1)
         }
-        guard let shown = highlight ?? selected else { return }
+        guard let shown = drag.highlight ?? selected ?? previewDrag?.cell else { return }
         let cell = shown.clamped(to: g)
         let rect = CGRect(x: CGFloat(cell.col) * cellW, y: CGFloat(cell.row) * cellH,
                           width: CGFloat(cell.w) * cellW, height: CGFloat(cell.h) * cellH)
             .insetBy(dx: inset, dy: inset)
         context.fill(Path(roundedRect: rect, cornerRadius: 3),
                      with: .color(.accentColor.opacity(enabled ? 0.85 : 0.35)))
+        // Dropping on an occupied cell swaps the two, so the map says so before you let go:
+        // the window that is about to be displaced appears, faint, in the cell being vacated.
+        // Otherwise it simply disappears under the accent fill and nobody can tell where it
+        // went. Same rule as `MenuBarController.move`, or the preview would be a promise the
+        // drop does not keep.
+        if let carried, occupants.indices.contains(carried.index) {
+            let from = occupants[carried.index].cell.clamped(to: g)
+            if cell.w == from.w, cell.h == from.h {
+                let inTheWay = occupants.enumerated().filter {
+                    $0.offset != carried.index && $0.element.cell.clamped(to: g).intersects(cell)
+                }
+                if inTheWay.count == 1 {
+                    draw(inTheWay[0].element, in: context, cellW: cellW, cellH: cellH,
+                         inset: inset, opacity: 0.35, at: from)
+                }
+            }
+        }
+        // A plain accent rectangle over somebody else's tile reads as "that one is selected".
+        // Carrying the name of the window in hand says what is actually about to happen.
+        if let carried, let occupant = occupants.indices.contains(carried.index)
+            ? occupants[carried.index] : nil, rect.height > 11, rect.width > 9 {
+            context.draw(Text(occupant.appName).font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.white),
+                         at: CGPoint(x: rect.midX, y: rect.midY))
+        }
     }
 
     /// One window's tile: the active one in the accent colour, the ones a layout cannot place
     /// exactly (full screen, or a minimum size larger than the cell) hollow and dashed.
     private func draw(_ occupant: AutoArrange.Occupant, in context: GraphicsContext,
-                      cellW: CGFloat, cellH: CGFloat, inset: CGFloat) {
-        let cell = occupant.cell.clamped(to: grid.clamped())
+                      cellW: CGFloat, cellH: CGFloat, inset: CGFloat, opacity: CGFloat = 1,
+                      at override: CellRect? = nil) {
+        let cell = (override ?? occupant.cell).clamped(to: grid.clamped())
         let rect = CGRect(x: CGFloat(cell.col) * cellW, y: CGFloat(cell.row) * cellH,
                           width: CGFloat(cell.w) * cellW, height: CGFloat(cell.h) * cellH)
             .insetBy(dx: inset, dy: inset)
         guard rect.width > 3, rect.height > 3 else { return }
         let shape = Path(roundedRect: rect, cornerRadius: 3)
         if occupant.resistant {
-            context.fill(shape, with: .color(.primary.opacity(0.06)))
-            context.stroke(shape, with: .color(.primary.opacity(0.4)),
+            context.fill(shape, with: .color(.primary.opacity(0.06 * opacity)))
+            context.stroke(shape, with: .color(.primary.opacity(0.4 * opacity)),
                            style: StrokeStyle(lineWidth: 1, dash: [2.5, 2]))
         } else if occupant.isFocused {
-            context.fill(shape, with: .color(.accentColor.opacity(0.85)))
+            context.fill(shape, with: .color(.accentColor.opacity(0.85 * opacity)))
         } else {
-            context.fill(shape, with: .color(.primary.opacity(0.28)))
+            context.fill(shape, with: .color(.primary.opacity(0.28 * opacity)))
         }
-        guard rect.height > 11 else { return }
+        // The faintest ghost (the window in your hand) carries no name: its name is already
+        // on the cell it is heading for. The displaced one keeps its name, dimmed — that name
+        // is the whole point of showing it.
+        guard rect.height > 11, opacity > 0.3 else { return }
         let initial = String(occupant.appName.prefix(1))
         let fits = rect.width > CGFloat(occupant.appName.count) * 5.4 + 6
         let label = fits ? occupant.appName : initial
         guard rect.width > 9 else { return }
-        let color: Color = occupant.isFocused ? .white : .primary.opacity(0.75)
+        let color: Color = occupant.isFocused
+            ? .white.opacity(opacity)
+            : .primary.opacity(0.75 * opacity)
         context.draw(Text(label).font(.system(size: 9, weight: .medium)).foregroundColor(color),
                      at: CGPoint(x: rect.midX, y: rect.midY))
     }
@@ -197,13 +258,13 @@ struct GridPicker: View {
     /// One gesture, two meanings, decided on the first event and never mid-drag:
     /// starting on a window drags *that* window, starting on free space sweeps a rectangle of
     /// cells for the front window. A press that never moves keeps the old meaning either way.
-    private func drag(in size: CGSize) -> some Gesture {
+    private func dragGesture(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 guard enabled else { return }
                 let current = cell(at: value.location, in: size)
                 let g = grid.clamped()
-                if anchor == nil && windowDrag == nil {
+                if drag.anchor == nil && drag.window == nil {
                     // Front to back, so the tile drawn on top is the one picked up — including
                     // a dashed one: a window that cannot take the size of its cell can still be
                     // moved, and refusing to drag it is how it used to fall through to the
@@ -213,41 +274,41 @@ struct GridPicker: View {
                     }
                     if let held, onMove != nil {
                         let cell = occupants[held].cell.clamped(to: g)
-                        windowDrag = WindowDrag(index: held,
-                                                colOffset: current.col - cell.col,
-                                                rowOffset: current.row - cell.row,
-                                                pressCol: current.col, pressRow: current.row)
+                        drag.window = WindowDrag(index: held,
+                                                 colOffset: current.col - cell.col,
+                                                 rowOffset: current.row - cell.row,
+                                                 pressCol: current.col, pressRow: current.row)
                     } else {
-                        anchor = CellRect(col: current.col, row: current.row)
+                        drag.anchor = CellRect(col: current.col, row: current.row)
                     }
                 }
                 if abs(value.translation.width) + abs(value.translation.height) > 4 {
-                    travelled = true
+                    drag.travelled = true
                 }
-                if let drag = windowDrag {
+                if let held = drag.window {
                     if NSEvent.modifierFlags.contains(.option) {
                         // Hold ⌥ and the window takes the rectangle you sweep instead of
                         // keeping its own size: that is how a window becomes a tall column.
-                        highlight = CellRect.spanning((drag.pressCol, drag.pressRow), current)
+                        drag.highlight = CellRect.spanning((held.pressCol, held.pressRow), current)
                             .clamped(to: grid)
                     } else {
-                        let cell = occupants[drag.index].cell.clamped(to: g)
-                        let col = min(max(0, current.col - drag.colOffset), max(0, g.cols - cell.w))
-                        let row = min(max(0, current.row - drag.rowOffset), max(0, g.rows - cell.h))
-                        highlight = CellRect(col: col, row: row, w: cell.w, h: cell.h)
+                        let cell = occupants[held.index].cell.clamped(to: g)
+                        let col = min(max(0, current.col - held.colOffset), max(0, g.cols - cell.w))
+                        let row = min(max(0, current.row - held.rowOffset), max(0, g.rows - cell.h))
+                        drag.highlight = CellRect(col: col, row: row, w: cell.w, h: cell.h)
                     }
-                } else if let start = anchor {
-                    highlight = CellRect.spanning((start.col, start.row), current).clamped(to: grid)
+                } else if let start = drag.anchor {
+                    drag.highlight = CellRect.spanning((start.col, start.row), current).clamped(to: grid)
                 }
             }
             .onEnded { _ in
-                let picked = highlight
-                let drag = windowDrag
-                let moved = travelled
-                anchor = nil; highlight = nil; windowDrag = nil; travelled = false
+                let picked = drag.highlight
+                let held = drag.window
+                let moved = drag.travelled
+                drag.reset()
                 guard enabled, let picked else { return }
-                if let drag, moved {
-                    let occupant = occupants[drag.index]
+                if let held, moved {
+                    let occupant = occupants[held.index]
                     guard picked != occupant.cell.clamped(to: grid.clamped()) else { return }
                     onMove?(occupant, picked)
                 } else if canPick {

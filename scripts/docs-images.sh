@@ -32,8 +32,8 @@ swift scripts/compose-docs.swift "$WORK/dark" "$WORK/light" "$WORK"
 # JPEG keeps the README light: the composed PNGs are several MB each.
 sips -s format jpeg -s formatOptions 82 "$WORK/hero.png"    --out docs/hero.jpg    >/dev/null
 sips -s format jpeg -s formatOptions 82 "$WORK/screens.png" --out docs/screens.jpg >/dev/null
-# GitHub social preview: 1280×640, has to stay under 1 MB. hero.png is already that shape.
-sips -z 640 1280 -s format jpeg -s formatOptions 88 "$WORK/hero.png" --out docs/social-preview.jpg >/dev/null
+# GitHub social preview: its own 1280×640 composition (the README hero is taller), under 1 MB.
+sips -z 640 1280 -s format jpeg -s formatOptions 88 "$WORK/social.png" --out docs/social-preview.jpg >/dev/null
 
 # One palette for the whole loop, or the gradient background crawls between frames.
 ffmpeg -loglevel error -y -framerate 10 -i "$WORK/frames/f%04d.png" \
