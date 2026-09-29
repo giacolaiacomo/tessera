@@ -557,10 +557,17 @@ struct TesseraPopover: View {
                 .font(.system(size: 10.5)).foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             Divider()
-            PopoverRow(title: tr("Fit the active window"), enabled: model.canPlace) {
+            PopoverRow(title: tr("Snap the front window"),
+                       note: model.canPlace
+                           ? String(format: tr("%@ into the biggest free space"),
+                                    model.appName ?? "")
+                           : tr("Nothing is in front right now"),
+                       enabled: model.canPlace) {
                 MenuBarController.shared.fitFocused()
             }
-            PopoverRow(title: tr("Fit grid to windows"), enabled: model.trusted) {
+            PopoverRow(title: tr("Fit the grid to the windows"),
+                       note: tr("Pick the grid from what is open, then arrange"),
+                       enabled: model.trusted) {
                 MenuBarController.shared.fitGridToWindows()
             }
         }
@@ -651,6 +658,13 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     /// afterwards the popover is frontmost and `AX.focusedWindow()` answers with the wrong thing.
     private var capturedWindow: ManagedWindow?
 
+    /// The last app that was in front before Tessera. Clicking the status item puts Tessera in
+    /// front, and so does opening the popover, so by the time the popover asks "what was the
+    /// front window?" the honest answer is no longer available from the system — unless it has
+    /// been kept. Without this, reopening the popover twice in a row disabled everything that
+    /// acts on the front window.
+    private var lastActiveApp: NSRunningApplication?
+
     var isPopoverShown: Bool { popover.isShown }
 
     func install() {
@@ -662,6 +676,15 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         statusItem = item
         popover.behavior = .transient
         popover.delegate = self
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            guard let app, app.processIdentifier != ProcessInfo.processInfo.processIdentifier
+            else { return }
+            self?.lastActiveApp = app
+        }
+        lastActiveApp = NSWorkspace.shared.frontmostApplication
     }
 
     /// Re-reads the config while the popover is open. Closed, it will read it again on the next open.
@@ -682,7 +705,7 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             if model.page == page { closePopover() } else { model.page = page }
             return
         }
-        capturedWindow = AX.isTrusted ? AX.focusedWindow() : nil
+        capturedWindow = captureFrontWindow()
         model.reload(window: capturedWindow)
         prefs.reload()
         model.page = page
@@ -692,6 +715,18 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+    }
+
+    /// Whatever was in front before Tessera got in the way: the system's answer while another
+    /// app is still frontmost, and the app we remembered once Tessera is.
+    func captureFrontWindow() -> ManagedWindow? {
+        guard AX.isTrusted else { return nil }
+        let us = ProcessInfo.processInfo.processIdentifier
+        if let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier != us,
+           let window = AX.focusedWindow(of: front) {
+            return window
+        }
+        return lastActiveApp.flatMap(AX.focusedWindow(of:))
     }
 
     func closePopover() {

@@ -110,13 +110,28 @@ enum AX {
 
     /// The focused window of the frontmost app — the target of a hotkey or a menu-bar click.
     static func focusedWindow() -> ManagedWindow? {
-        guard let app = NSWorkspace.shared.frontmostApplication, let bundleID = app.bundleIdentifier
-        else { return nil }
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        return focusedWindow(of: app)
+    }
+
+    /// The window this app is working in. Asked of a named app rather than of "whatever is in
+    /// front", because Tessera itself is in front the moment its popover opens — and then
+    /// "the front window" would be its own, which is nothing.
+    static func focusedWindow(of app: NSRunningApplication) -> ManagedWindow? {
+        guard let bundleID = app.bundleIdentifier else { return nil }
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
-        guard let window = attribute(appElement, kAXFocusedWindowAttribute as String, AXUIElement?.self) ?? nil
-        else { return nil }
-        return ManagedWindow(element: window, pid: app.processIdentifier, bundleID: bundleID,
-                             appName: app.localizedName ?? bundleID, title: title(of: window))
+        func wrap(_ window: AXUIElement) -> ManagedWindow {
+            ManagedWindow(element: window, pid: app.processIdentifier, bundleID: bundleID,
+                          appName: app.localizedName ?? bundleID, title: title(of: window))
+        }
+        if let window = attribute(appElement, kAXFocusedWindowAttribute as String, AXUIElement?.self) ?? nil,
+           isPlaceable(window) {
+            return wrap(window)
+        }
+        // No focused window is not the same as no window: an app can be in front with its
+        // menu bar and a document window that simply does not hold focus.
+        let windows = attribute(appElement, kAXWindowsAttribute as String, [AXUIElement].self) ?? []
+        return windows.first(where: isPlaceable).map(wrap)
     }
 
     /// The window under a screen point (Cocoa coords), topmost first — what a drag is carrying.

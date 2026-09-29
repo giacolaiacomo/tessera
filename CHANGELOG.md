@@ -13,6 +13,14 @@
   asked.
 - **`--diagnose` and the popover count what the arrangement will really do**, including the
   windows it will leave alone.
+- **Fixed: everything that acts on the front window went dead after the first use.** Opening the
+  popover puts Tessera in front, so the second time it opened, "the front window" was Tessera's
+  own — nothing. It now remembers the app that was in front before it, and falls back to that
+  app's first placeable window when nothing holds focus. `--diagnose` prints what it sees as the
+  front window.
+- **The two commands under the arrange button say what they do**: "Snap the front window" (with
+  the app's name and where it will go) and "Fit the grid to the windows". When the first one is
+  unavailable it says why instead of being a grey line.
 - **Quick grids in the popover**: Auto plus the presets that suit the shape of that screen, one
   click away, with the arrangement named in a picker instead of hidden behind an icon. Picking an
   arrangement makes it the default and applies it.

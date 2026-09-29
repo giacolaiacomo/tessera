@@ -320,7 +320,12 @@ func diagnosticsText() -> String {
     print(String(format: tr("Tessera %@ — diagnostics (no window is moved)"), appVersion))
     print(String(format: tr("Accessibility access: %@"),
                  AX.isTrusted ? tr("on") : tr("NOT on — allow the app and try again")))
-    print(String(format: tr("Default arrangement: %@"), config.defaultStrategy.label) + "\n")
+    print(String(format: tr("Default arrangement: %@"), config.defaultStrategy.label))
+    // What the popover would act on. Tessera is in front while its own popover is open, so
+    // this is the app that was in front before it, not whatever the system says right now.
+    print(String(format: tr("Front window: %@"),
+                 MenuBarController.shared.captureFrontWindow()
+                    .map { "\($0.appName) — \($0.title)" } ?? tr("none")) + "\n")
 
     for screen in NSScreen.screens {
         let key = screen.tesseraKey

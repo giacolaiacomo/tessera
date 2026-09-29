@@ -67,8 +67,12 @@ let italian: [String: String] = [
     "%d windows in the grid": "%d finestre in griglia",
     "1 stays where it is": "1 resta dov'è",
     "%d stay where they are": "%d restano dove sono",
-    "Fit the active window": "Sistema la finestra attiva",
-    "Fit grid to windows": "Adatta la griglia alle finestre",
+    "Snap the front window": "Sistema la finestra davanti",
+    "%@ into the biggest free space": "%@ nello spazio libero più grande",
+    "Nothing is in front right now": "Adesso non c'è nessuna finestra davanti",
+    "Fit the grid to the windows": "Adatta la griglia alle finestre",
+    "Pick the grid from what is open, then arrange":
+        "Sceglie la griglia da ciò che è aperto, poi dispone",
     "Layouts": "Disposizioni",
     "No saved layouts.": "Nessuna disposizione salvata.",
     "Save current layout…": "Salva disposizione attuale…",
@@ -157,6 +161,7 @@ let italian: [String: String] = [
         "Schermo %@: sistemate %d finestre con la strategia «%@».",
     "Tessera %@ — diagnostics (no window is moved)":
         "Tessera %@ — diagnostica (nessuna finestra viene spostata)",
+    "Front window: %@": "Finestra davanti: %@",
     "Accessibility access: %@": "Accesso Accessibilità: %@",
     "on": "attivo",
     "NOT on — allow the app and try again": "NON attivo — autorizza l'app e riprova",
