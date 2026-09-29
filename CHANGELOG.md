@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Fixed: "Arrange all" needed a second click to finish the job.** The first click put the
+  windows in the right places at not-quite-the-right sizes; the second one got it right. Two
+  separate causes, both now measured rather than guessed at.
+  - An app that has to grow a window a long way stops short of the size it was given, and takes
+    the rest only when asked again. Three Terminal windows dragged from 1900×1000 into the cells
+    of a 3×1 came out about 60 px short every time.
+  - **It will not hear the second request if it comes too soon.** Repeating the write straight
+    away changed nothing at all — six writes in 200 ms left the windows exactly as wrong as one
+    did. A pause of 120 ms before asking again is what the second click really was, and with it
+    one click lands the windows within 4 px, which is Terminal's character grid and as close as
+    anything gets.
+  Tessera now asks again, up to twice, pausing first, and only of a window that has not landed
+  and whose app is not already known to need more room than the cell has. A screen where
+  everything lands first time pays nothing for any of this: still 71 ms. The same applies to a
+  single placement, so dragging one window on the map finishes in one gesture too.
+
 - **Fixed: the first "Arrange all" placed the windows but did not resize them, and it took a
   second one to get it right.** The cause is the oldest trap in this codebase, walked into from
   a new direction. Tessera writes a position and a size, waits, and then corrects any window

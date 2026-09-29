@@ -351,6 +351,34 @@ enum AutoArrange {
         clock.mark("settle ×\(rounds)")
 
 
+        // A window that has not landed and whose app is not known to refuse a cell this size did
+        // not get the whole message: a position took and a size did not, or the app was busy
+        // with the window before it — several windows of one app go through one process, and it
+        // does not always keep up. The cure is to repeat the request, in full, exactly as it was
+        // made. Repeating the *target* is safe. What is never safe, and was the last bug here,
+        // is writing back a size read off the window a moment earlier: that one cancels a
+        // resize still in flight.
+        // Asked once more, and then once more again if it is still not there. Terminal growing
+        // from small to large overshoots the height it was given by about sixty pixels and then
+        // takes the right one when asked a second time from where it now is, which is precisely
+        // why clicking "Arrange all" twice used to work. Two extra rounds is what that second
+        // click was, done here. Nothing is asked of a window already on its cell, or of an app
+        // known to need more room than the cell has, so a screen that lands first time pays
+        // nothing for this.
+        for _ in 0..<2 {
+            let missing = moves.indices.filter {
+                !landed($0) && fits(moves[$0].window, in: moves[$0].target.size)
+            }
+            guard !missing.isEmpty else { break }
+            usleep(120_000)
+            for index in missing {
+                AX.writeFrame(moves[index].window.element, to: moves[index].target)
+                lastCorrections += 1
+            }
+            waitForStillness(moves.map { $0.window.element }, upTo: 400)
+        }
+        clock.mark("repeat ×\(lastCorrections)")
+
         // One corrective pass, and it is the same one for both things that can have gone wrong:
         // a write the app dropped, and an app that refused the size of its cell and is now
         // hanging off the edge of the screen. Either way the answer is the same — keep whatever
@@ -375,17 +403,7 @@ enum AutoArrange {
         // Only a window that was actually slid needs time to answer before the report reads it,
         // and it is asked by looking, like everything else here. This used to be a flat tenth of
         // a second paid on every arrangement, including the ones where nothing moved at all.
-        if slid {
-            var previous = moves.map { AX.frame(of: $0.window.element) }
-            let until = DispatchTime.now().uptimeNanoseconds + 200_000_000
-            while DispatchTime.now().uptimeNanoseconds < until {
-                usleep(12_000)
-                let now = moves.map { AX.frame(of: $0.window.element) }
-                let still = zip(now, previous).allSatisfy(AX.same)
-                previous = now
-                if still { break }
-            }
-        }
+        if slid { waitForStillness(moves.map { $0.window.element }, upTo: 200) }
         clock.mark("slide")
 
         lastOutcomes = zip(moves, errors).map { move, error in
@@ -404,6 +422,22 @@ enum AutoArrange {
                           width: here.width - there.width, height: here.height - there.height)
         })
         return lastOutcomes.filter { $0.outcome.succeeded }.count
+    }
+
+    /// Waits until a set of windows has stopped changing shape, or until the budget runs out.
+    /// Three quiet reads, because an app that animates a resize pauses between steps and two
+    /// reads can fall in the same pause.
+    private static func waitForStillness(_ windows: [AXUIElement], upTo milliseconds: UInt64) {
+        var previous = windows.map { AX.frame(of: $0) }
+        var quiet = 0
+        let until = DispatchTime.now().uptimeNanoseconds + milliseconds * 1_000_000
+        while DispatchTime.now().uptimeNanoseconds < until {
+            usleep(20_000)
+            let now = windows.map { AX.frame(of: $0) }
+            quiet = zip(now, previous).allSatisfy(AX.same) ? quiet + 1 : 0
+            previous = now
+            if quiet >= 3 { return }
+        }
     }
 
     /// Where the milliseconds of the last arrangement went, and how far off its target each

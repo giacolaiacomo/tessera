@@ -329,8 +329,32 @@ enum AX {
         let fillsScreen = abs(current.width - screen.visibleFrame.width) < 4
             && abs(current.height - screen.visibleFrame.height) < 4
         writeFrame(window.element, to: target, shrinkFirst: fillsScreen)
-        keepOnScreen(window.element, hungFrom: target, within: screen.visibleFrame, wasAt: current)
+        var now = frameOnceStill(of: window.element, wasAt: current)
+
+        // Asked again if it did not arrive, with a pause first. An app growing a window by a
+        // lot stops short of the size it was given and takes the rest only when asked a second
+        // time, and it will not hear that second request if it comes too soon — which is why
+        // one drag, or one "Arrange all", used to need a second one to finish the job. Nothing
+        // is repeated to a window that landed, or to an app already known to need more room
+        // than the cell has.
+        for _ in 0..<2 {
+            guard let here = now, !landed(here, on: target),
+                  AutoArrange.fits(window, in: target.size) else { break }
+            usleep(120_000)
+            writeFrame(window.element, to: target)
+            now = frameOnceStill(of: window.element, wasAt: here)
+        }
+
+        keepOnScreen(window.element, hungFrom: target, within: screen.visibleFrame, settledAt: now)
         return true
+    }
+
+    /// Whether a frame is on its target, to the tolerance an app's own rounding needs — Terminal
+    /// snaps to whole character rows and lands a few pixels short of any cell.
+    static func landed(_ frame: CGRect, on target: CGRect) -> Bool {
+        let here = toAX(frame), there = toAX(target)
+        return abs(here.minX - there.minX) <= 4 && abs(here.minY - there.minY) <= 4
+            && abs(here.width - there.width) <= 24 && abs(here.height - there.height) <= 24
     }
 
     /// Moves a window without saying anything about its size. Every correction Tessera makes
@@ -379,8 +403,8 @@ enum AX {
     /// from the cell's top-left corner it then sticks out past the edge of the screen, which is
     /// no use to anybody. Same size, same corner, slid back inside.
     static func keepOnScreen(_ window: AXUIElement, hungFrom target: CGRect,
-                             within visible: CGRect, wasAt before: CGRect?) {
-        guard let now = frameOnceStill(of: window, wasAt: before) else { return }
+                             within visible: CGRect, settledAt now: CGRect?) {
+        guard let now else { return }
         guard now.minX < visible.minX - 1 || now.minY < visible.minY - 1
                 || now.maxX > visible.maxX + 1 || now.maxY > visible.maxY + 1 else { return }
         var rect = CGRect(x: target.minX, y: target.maxY - now.height,
