@@ -62,6 +62,11 @@ struct CellRect: Codable, Equatable, Hashable {
         col >= self.col && col <= maxCol && row >= self.row && row <= maxRow
     }
 
+    /// Whether two rectangles of cells share any cell at all.
+    func intersects(_ other: CellRect) -> Bool {
+        col <= other.maxCol && other.col <= maxCol && row <= other.maxRow && other.row <= maxRow
+    }
+
     func clamped(to grid: GridSpec) -> CellRect {
         let c = max(0, min(col, grid.cols - 1))
         let r = max(0, min(row, grid.rows - 1))

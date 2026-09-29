@@ -191,5 +191,19 @@ do {
     }
 }
 
+// MARK: - Cells that get in the way
+
+// What counts as "already occupied" when a window is dropped on the map.
+do {
+    let tall = CellRect(col: 2, row: 0, w: 1, h: 2)
+    check(tall.intersects(CellRect(col: 2, row: 1)), "a tall column contains the cell below it")
+    check(CellRect(col: 2, row: 1).intersects(tall), "intersection is symmetric")
+    check(!tall.intersects(CellRect(col: 1, row: 0)), "the next column over is not in the way")
+    check(!tall.intersects(CellRect(col: 2, row: 2)), "the row under a 2-high column is free")
+    check(CellRect(col: 0, row: 0, w: 3, h: 2).intersects(CellRect(col: 1, row: 1)),
+          "a wide rectangle covers what is inside it")
+    check(CellRect(col: 0, row: 0).intersects(CellRect(col: 0, row: 0)), "a cell is in its own way")
+}
+
 print(failures == 0 ? "ALL GEOMETRY CHECKS PASSED" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

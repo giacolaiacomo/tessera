@@ -9,6 +9,9 @@
   front one, and the popover stays open. Hold ⌥ while dragging to give it a rectangle of cells
   instead of keeping its size. Windows an app will not resize drag like any other — before, they
   could not be dragged at all, and the gesture silently moved the front window instead.
+- **Dropping a window on an occupied cell swaps the two** instead of piling them up. Only when
+  exactly one window is in the way and the dragged one keeps its shape; an ⌥-sweep leaves
+  whatever it covers alone.
 - **`--place col,row[,w,h]`**: the front window into one rectangle of the grid, from the command
   line.
 - A single placement (map, zone hotkey, `--place`) also keeps a window that refuses to shrink

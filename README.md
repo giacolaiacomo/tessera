@@ -103,7 +103,9 @@ are the quick grid presets, **Arrange all**, and the pages for zones, layouts an
 - **Move one window:** drag its tile on the map to another cell. That window moves, not the front
   one, and the popover stays open so you can move the next one. Hold **⌥** while dragging to give
   it a rectangle of cells instead of keeping its size — that is how a window becomes a tall column.
-  A dashed tile (an app that cannot take the size of its cell) drags like any other.
+  A dashed tile (an app that cannot take the size of its cell) drags like any other. Dropping a
+  window where another one already sits **swaps** them: the one that was there takes the cell you
+  just left.
 - **Place the front window:** click a cell, or drag across a rectangle of cells starting from an
   empty one.
 - **Pick a grid:** tap a preset (2×1, 3×1, 4×1, 3×2, 4×2) or set columns and rows with the

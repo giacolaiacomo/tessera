@@ -712,8 +712,20 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     /// you will often move another right after, so the popover stays open. The map is redrawn a
     /// beat later: an app answers a write on its own run loop, and reading at once would draw
     /// the window where it no longer is.
+    ///
+    /// Dropping a window where another one already sits is a swap, not a pile: the window that
+    /// was there takes the cell just vacated. Only when exactly one window is in the way and
+    /// the dragged one keeps its shape — sweeping a bigger rectangle with ⌥ is a reshaping, and
+    /// whatever it covers is left alone.
     func move(_ occupant: AutoArrange.Occupant, to cell: CellRect) {
         let screen = AX.screen(of: occupant.window)
+        let from = occupant.cell
+        let inTheWay = model.occupants.filter {
+            !CFEqual($0.window.element, occupant.window.element) && $0.cell.intersects(cell)
+        }
+        if inTheWay.count == 1, cell.w == from.w, cell.h == from.h {
+            AX.place(inTheWay[0].window, in: from, on: AX.screen(of: inTheWay[0].window))
+        }
         OverlayController.shared.flash(cell: cell, on: screen)
         AX.place(occupant.window, in: cell, on: screen)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
