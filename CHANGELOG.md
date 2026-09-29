@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-09-29
 
 - **Tessera learns how small each app goes** and stops proposing cells they cannot use. A window
   that refuses its cell tells us its minimum for free; the automatic grid then picks fewer, bigger
