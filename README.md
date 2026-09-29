@@ -15,6 +15,11 @@ Una piccola app nella barra dei menu di macOS per disporre le finestre su una **
 - **Disposizioni salvate**: "Dev", "Call", "Ricerca" — tutte le finestre al loro posto in un colpo.
 - **Auto-fit**: se vuoi, ogni finestra nuova finisce da sola nell'area libera più grande.
 
+La griglia di ogni schermo può essere **fissa** — quella che scegli tu — oppure **automatica**:
+la decide il numero di finestre aperte su quel monitor, così ci stanno tutte e si vedono tutte.
+Su un 34" ultrawide quattro finestre diventano 2×2 e sei diventano 3×2; i margini che hai scelto
+restano i tuoi, la modalità decide solo quante celle.
+
 Gap esterni e interni configurabili, griglia diversa per ogni schermo. Tocca solo le finestre della
 Scrivania in cui sei.
 
@@ -38,6 +43,7 @@ spostare le finestre delle altre app. Per disinstallare: `./uninstall.sh`.
 T=~/Applications/Tessera.app/Contents/MacOS/Tessera
 $T --diagnose                       # cosa vede e cosa farebbe, senza muovere nulla
 $T --arrange cells --screen Acer    # dispone davvero, su uno schermo scelto, e riporta esito per finestra
+$T --fit-grid --screen Acer         # sceglie la griglia dalle finestre aperte e le dispone tutte
 $T --exit-fullscreen                # riporta le finestre fuori dal fullscreen (lì non sono disponibili)
 ```
 

@@ -144,12 +144,16 @@ struct Config: Codable {
     var launchAtLogin = false
     var rearrangeOnGridChange = true         // changing the grid re-tiles that screen at once
     var autoFitNewWindows = false            // a new window drops into the biggest free area
+    /// Screens whose grid is not chosen by hand but derived from how many windows are open.
+    var autoGrid: [String: Bool] = [:]
     var defaultStrategy: ArrangeStrategy = .balanced
     var masterFraction: CGFloat = 0.6        // width of the master tile in "master + stack"
 
     func grid(for screenKey: String) -> GridSpec {
         (grids[screenKey] ?? .default).clamped()
     }
+
+    func isAutoGrid(_ screenKey: String) -> Bool { autoGrid[screenKey] ?? false }
 
     init() {}
 
@@ -169,6 +173,7 @@ struct Config: Codable {
         launchAtLogin = value(.launchAtLogin, false)
         rearrangeOnGridChange = value(.rearrangeOnGridChange, true)
         autoFitNewWindows = value(.autoFitNewWindows, false)
+        autoGrid = value(.autoGrid, [:])
         defaultStrategy = value(.defaultStrategy, .balanced)
         masterFraction = value(.masterFraction, 0.6)
     }

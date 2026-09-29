@@ -45,6 +45,20 @@ final class AppController {
         AutoArrange.apply(AutoArrange.windows(on: screen), on: screen, strategy: strategy)
     }
 
+    /// Picks the grid that shows everything open on this screen, applies it, and tiles one
+    /// window per cell. The one-shot version of the automatic mode.
+    @discardableResult
+    func fitGridAndArrange(on screen: NSScreen) -> Int {
+        let key = screen.tesseraKey
+        let windows = AutoArrange.windows(on: screen)
+        let grid = AutoArrange.bestGrid(for: windows.count, on: screen,
+                                        like: store.config.grid(for: key))
+        // Written as an automatic grid so this does not also trigger the "re-tile on grid
+        // change" rule: the arrangement below is the one that should happen, once.
+        AutoArrange.writeGrid(grid, for: key)
+        return AutoArrange.apply(windows, on: screen, strategy: .cells)
+    }
+
     /// Finds a screen by its key or by a piece of its name, for the command line.
     static func screen(matching text: String?) -> NSScreen {
         guard let text, !text.isEmpty else { return .underMouse }
@@ -96,7 +110,7 @@ final class AppController {
     private func rearrangeScreensWhoseGridChanged() {
         let grids = store.config.grids
         defer { knownGrids = grids }
-        guard store.config.rearrangeOnGridChange else { return }
+        guard store.config.rearrangeOnGridChange, !AutoArrange.isWritingAutoGrid else { return }
         for (key, grid) in grids where knownGrids[key] != grid {
             guard let screen = NSScreen.screen(forKey: key) else { continue }
             AutoArrange.apply(AutoArrange.windows(on: screen), on: screen,
@@ -142,6 +156,7 @@ final class AppController {
 
     // MARK: Commands from the command line
 
+    static let fitGridNotification = Notification.Name("sh.tessera.fitgrid")
     static let settingsNotification = Notification.Name("sh.tessera.settings")
     static let exitFullScreenNotification = Notification.Name("sh.tessera.exitfullscreen")
     static let diagnoseNotification = Notification.Name("sh.tessera.diagnose")
@@ -157,6 +172,19 @@ final class AppController {
         center.addObserver(forName: Self.diagnoseNotification, object: nil, queue: .main) { _ in
             try? diagnosticsText().write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
                                         atomically: true, encoding: .utf8)
+        }
+        center.addObserver(forName: Self.fitGridNotification, object: nil, queue: .main) { [weak self] note in
+            let parts = (note.object as? String)?.components(separatedBy: ";") ?? []
+            let screen = AppController.screen(matching: parts.count > 1 ? parts[1] : nil)
+            let moved = self?.fitGridAndArrange(on: screen) ?? 0
+            let grid = Store.shared.config.grid(for: screen.tesseraKey)
+            let detail = AutoArrange.lastOutcomes
+                .map { "  \($0.app): \($0.outcome.describedInItalian)" }
+                .joined(separator: "\n")
+            let report = "Schermo \(screen.localizedName): griglia \(grid.cols)×\(grid.rows) "
+                + "dalle finestre aperte, sistemate \(moved).\n" + detail + "\n"
+            try? report.write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
+                              atomically: true, encoding: .utf8)
         }
         center.addObserver(forName: Self.settingsNotification, object: nil, queue: .main) { _ in
             // Settings are a page of the popover now, so this toggles the popover on that page.
@@ -263,8 +291,11 @@ func diagnosticsText() -> String {
         let plan = AutoArrange.plan(on: screen)
         print("Schermo \(screen.localizedName) [\(key)]")
         print("  visibleFrame: \(short(screen.visibleFrame))")
+        let origin = config.isAutoGrid(key)
+            ? " (automatica: si ricalcola quando disponi, non adesso)"
+            : (config.grids[key] == nil ? " (predefinita, mai modificata per questo schermo)" : " (fissa)")
         print("  griglia: \(grid.cols)×\(grid.rows), gap esterno \(Int(grid.outerGap)) interno \(Int(grid.innerGap))"
-              + (config.grids[key] == nil ? " (predefinita, mai modificata per questo schermo)" : ""))
+              + origin)
         print("  finestre su questa Scrivania: \(windows.count) — ne sistemerebbe \(plan.tiled), ne lascia \(plan.untouched)")
 
         let ordered = AX.sortedFrontToBack(windows).prefix(grid.cols * grid.rows).sorted { a, b in
@@ -327,6 +358,14 @@ func askRunningApp(_ name: Notification.Name, strategy: String?) -> Bool {
 if arguments.contains("--diagnose") {
     // With the permission in hand (rare from a terminal) answer directly; otherwise ask the app.
     if AX.isTrusted { print(diagnosticsText()) } else { _ = askRunningApp(AppController.diagnoseNotification, strategy: nil) }
+    exit(0)
+}
+
+if let index = arguments.firstIndex(of: "--fit-grid") {
+    _ = index
+    let screenIndex = arguments.firstIndex(of: "--screen")
+    let screen = screenIndex.flatMap { arguments.count > $0 + 1 ? arguments[$0 + 1] : nil } ?? ""
+    _ = askRunningApp(AppController.fitGridNotification, strategy: ";\(screen)")
     exit(0)
 }
 

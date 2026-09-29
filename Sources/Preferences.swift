@@ -105,6 +105,8 @@ final class PrefsModel: ObservableObject {
     @Published var previewWindowCount = 4
     @Published var launchAtLogin: Bool
     @Published var accessibilityTrusted: Bool
+    /// How many windows the selected screen holds — what an automatic grid is derived from.
+    @Published private(set) var windowsOnScreen = 0
 
     init() {
         config = Store.shared.config
@@ -122,6 +124,47 @@ final class PrefsModel: ObservableObject {
         }
         launchAtLogin = SMAppService.mainApp.status == .enabled
         accessibilityTrusted = AX.isTrusted
+        countWindows()
+        refreshAutoGrid()
+    }
+
+    /// The grid an automatic screen would get for the windows open right now — shown as a
+    /// preview only. Nothing is written: the grid settles when you arrange, not when you look
+    /// at this panel, or the layout would shift under windows already placed in it.
+    var previewedAutoGrid: GridSpec? {
+        guard config.isAutoGrid(screenKey), let screen = NSScreen.screen(forKey: screenKey)
+        else { return nil }
+        return AutoArrange.bestGrid(for: windowsOnScreen, on: screen, like: grid)
+    }
+
+    func refreshAutoGrid() {
+        countWindows()
+    }
+
+    private func countWindows() {
+        guard AX.isTrusted, let screen = NSScreen.screen(forKey: screenKey) else {
+            windowsOnScreen = 0
+            return
+        }
+        windowsOnScreen = AutoArrange.windows(on: screen).count
+    }
+
+    var isAutoGrid: Bool { config.isAutoGrid(screenKey) }
+
+    func selectScreen(_ key: String) {
+        screenKey = key
+        countWindows()
+        refreshAutoGrid()
+    }
+
+    func bindAutoGrid() -> Binding<Bool> {
+        Binding(get: { self.isAutoGrid },
+                set: { value in
+                    let key = self.screenKey
+                    self.update { $0.autoGrid[key] = value }
+                    self.countWindows()
+                    self.refreshAutoGrid()
+                })
     }
 
     private static func screenOptions() -> [PrefsScreenOption] {
@@ -314,10 +357,34 @@ struct PrefsGridSection: View {
 
     private let presets: [(cols: Int, rows: Int)] = [(2, 2), (3, 2), (12, 8), (16, 9)]
 
+    private var modePicker: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Picker("", selection: model.bindAutoGrid()) {
+                Text("Fissa").tag(false)
+                Text("Automatica").tag(true)
+            }
+            .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+            Text(modeNote)
+                .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var modeNote: String {
+        guard model.isAutoGrid else {
+            return "Le celle sono quelle che scegli tu, qualunque cosa sia aperta."
+        }
+        let grid = model.grid
+        let windows = model.windowsOnScreen
+        guard windows > 0 else { return "Le celle nascono da quante finestre ci sono sullo schermo." }
+        return "Ora \(grid.cols)×\(grid.rows), da \(windows == 1 ? "1 finestra aperta" : "\(windows) finestre aperte")."
+    }
+
     var body: some View {
         TesseraCard(title: "Griglia") {
             if model.screens.count > 1 {
-                Picker("", selection: $model.screenKey) {
+                Picker("", selection: Binding(get: { model.screenKey },
+                                              set: { model.selectScreen($0) })) {
                     ForEach(model.screens) { Text($0.title).tag($0.id) }
                 }
                 .labelsHidden().controlSize(.small)
@@ -325,20 +392,27 @@ struct PrefsGridSection: View {
                 Text(model.screens.first?.title ?? "Schermo principale")
                     .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
             }
-            SettingRow(label: "Colonne") {
-                MiniStepper(value: model.bindGrid(\.cols), range: 1...32)
-            }
-            SettingRow(label: "Righe") {
-                MiniStepper(value: model.bindGrid(\.rows), range: 1...32)
-            }
-            HStack(spacing: 5) {
-                ForEach(presets, id: \.cols) { preset in
-                    Button("\(preset.cols)×\(preset.rows)") {
-                        model.setGrid(cols: preset.cols, rows: preset.rows)
+            modePicker
+            // In automatic mode the cell count is the engine's to decide: the controls stay
+            // visible, and dimmed, so it is clear what the mode took over.
+            Group {
+                SettingRow(label: "Colonne") {
+                    MiniStepper(value: model.bindGrid(\.cols), range: 1...32)
+                }
+                SettingRow(label: "Righe") {
+                    MiniStepper(value: model.bindGrid(\.rows), range: 1...32)
+                }
+                HStack(spacing: 5) {
+                    ForEach(presets, id: \.cols) { preset in
+                        Button("\(preset.cols)×\(preset.rows)") {
+                            model.setGrid(cols: preset.cols, rows: preset.rows)
+                        }
+                        .controlSize(.small)
                     }
-                    .controlSize(.small)
                 }
             }
+            .disabled(model.isAutoGrid)
+            .opacity(model.isAutoGrid ? 0.45 : 1)
             Divider()
             SettingRow(label: "Bordo esterno") {
                 MiniSlider(value: model.bindGrid(\.outerGap), range: 0...40)

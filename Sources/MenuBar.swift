@@ -25,6 +25,7 @@ final class PopoverModel: ObservableObject {
     @Published fileprivate(set) var appName: String?
     @Published fileprivate(set) var screenName = ""
     @Published fileprivate(set) var grid = GridSpec.default
+    @Published fileprivate(set) var autoGrid = false
     @Published fileprivate(set) var screenAspect: CGFloat = 1.6
     @Published fileprivate(set) var occupants: [AutoArrange.Occupant] = []
     @Published fileprivate(set) var tiled = 0
@@ -48,6 +49,9 @@ final class PopoverModel: ObservableObject {
         trusted = AX.isTrusted
         appName = window?.appName
         screenName = screen.localizedName
+        autoGrid = config.isAutoGrid(screen.tesseraKey)
+        // Read, never recompute: an automatic grid is settled when you arrange, not when you
+        // look. Otherwise opening this popover redraws the map against a grid nobody applied.
         grid = config.grid(for: screen.tesseraKey)
         screenAspect = frame.height > 0 ? frame.width / frame.height : 1.6
         occupants = trusted ? AutoArrange.occupancy(on: screen) : []
@@ -68,6 +72,7 @@ extension PopoverModel {
         appName = "Safari"
         screenName = "Acer X34 P"
         grid = GridSpec(cols: 3, rows: 2)
+        autoGrid = true
         screenAspect = 21.0 / 9.0
         occupants = [
             AutoArrange.Occupant(appName: "Safari", cell: CellRect(col: 0, row: 0), isFocused: true, resistant: false),
@@ -340,6 +345,12 @@ struct TesseraPopover: View {
                 Text("\(model.grid.cols)×\(model.grid.rows)")
                     .font(.system(size: 11, weight: .medium, design: .rounded)).monospacedDigit()
                     .foregroundStyle(Color.accentColor)
+                if model.autoGrid {
+                    Text("auto").font(.system(size: 9, weight: .semibold))
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+                        .foregroundStyle(Color.accentColor)
+                }
                 Spacer(minLength: 4)
                 Text(windowCount(model.windowCount))
                     .font(.system(size: 11, design: .rounded)).monospacedDigit()
@@ -408,6 +419,9 @@ struct TesseraPopover: View {
             Divider()
             PopoverRow(title: "Sistema la finestra attiva", enabled: model.canPlace) {
                 MenuBarController.shared.fitFocused()
+            }
+            PopoverRow(title: "Adatta la griglia alle finestre", enabled: model.trusted) {
+                MenuBarController.shared.fitGridToWindows()
             }
         }
     }
@@ -551,6 +565,12 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     /// window was just moved, or the user ends up typing into nothing.
     private func giveFocusBack(to window: ManagedWindow) {
         NSRunningApplication(processIdentifier: window.pid)?.activate()
+    }
+
+    /// One-off: recompute the grid from how many windows are open, then tile them into it.
+    func fitGridToWindows() {
+        closePopover()
+        AppController.shared.fitGridAndArrange(on: NSScreen.underMouse)
     }
 
     func arrange(with strategy: ArrangeStrategy) {

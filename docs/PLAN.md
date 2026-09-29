@@ -31,7 +31,7 @@ Swift + AppKit/SwiftUI, nessuna dipendenza, build con `swiftc Sources/*.swift` (
 
 ## Ledger
 
-**Next action:** Gianluca prova popover, hotkey e disposizioni salvate a mano (il motore è verificato dal vivo); sulla RAM non c'è altro da limare: misurata pari a Burny e guardare drag-to-zone e "sistema tutto" su dati reali (Gianluca).
+**Next action:** Gianluca prova popover, hotkey e disposizioni salvate a mano (il motore è verificato dal vivo sull'Acer: tutte le finestre atterrano al primo colpo).
 
 | Data | Compito | Commit | Verdetto | Note |
 |---|---|---|---|---|
@@ -137,3 +137,30 @@ Resta il comando `--settings` (apre/chiude le Impostazioni da terminale), nato p
 
 **Deviazioni dal piano:** `masterStack` non era rappresentabile quando la pila supera le righe della
 griglia; invece di stringere le finestre sotto la cella, ripiega sulla disposizione bilanciata.
+
+
+### Round 3 — «si muovono mille volte invece che andare diretto»
+
+Gianluca, dopo la prova dal vivo: «è proprio alla base il processo che è sbagliato: tu sai dove devi
+andare, quante ce n'hai, come puoi fare e lì vai diretto» e «ti stai overcomplicando una cosa facilissima».
+Aveva ragione due volte.
+
+- **Tolto tutto l'impianto adattivo**: cache delle dimensioni minime imparate, assegnazione per
+  domanda, `PlannedMove`, tassonomia dei rifiuti. Lo schermo è noto e le finestre si contano:
+  le celle sono note, quindi una scrittura per finestra.
+- **La causa vera delle finestre che non si ridimensionavano** non era l'app che rifiuta: era Tessera
+  che leggeva e riscriveva più in fretta di quanto l'app risponda. Una app applica una scrittura AX
+  sul proprio run loop; la lettura fatta subito dopo restituisce il frame di prima, e la terza
+  scrittura di posizione — decisa su quella lettura vecchia — annullava il ridimensionamento ancora
+  in volo. Misurato con una sonda: la stessa finestra che «rifiutava» 1136×1394 accetta ogni altezza
+  richiesta se le si lascia 250 ms.
+- Ora: posizione → dimensione, nessuna rilettura; 80 ms fra una finestra e l'altra (due finestre della
+  stessa app passano per un solo processo, e a raffica tiene la prima e scarta le altre); una sola
+  scrittura correttiva, e solo per chi è rimasto lontano dalla cella, giudicata sull'angolo AX.
+- **Tolleranze oneste**: uno scarto fino a 20 px di dimensione è l'app che si aggancia alla propria
+  griglia (Terminal alle righe di caratteri) e conta come «ok»; WhatsApp che pretende 800 px di
+  larghezza in una cella da 493 resta segnalato come «l'app impone».
+
+| Data | Compito | Commit | Verdetto | Note |
+|---|---|---|---|---|
+| 2026-09-29 | Semplificazione motore + griglia fissa/automatica per schermo | — | fatto | prova sull'Acer (3 Terminal, 3×1) e sull'interno (Chrome + WhatsApp, 3×2): tutte «ok» al primo colpo tranne la larghezza minima di WhatsApp; seconda passata identica alla prima (nessuno si muove più) |

@@ -9,6 +9,7 @@ final class AppController {
     @discardableResult func placeFocused(in cell: CellRect) -> Bool { false }
     @discardableResult func fitFocused() -> Bool { false }
     @discardableResult func arrangeCurrentScreen(_ strategy: ArrangeStrategy) -> Int { 0 }
+    @discardableResult func fitGridAndArrange(on screen: NSScreen) -> Int { 0 }
     @discardableResult func apply(_ layout: Layout) -> Int { 0 }
     func captureLayout(named name: String) -> Layout { Layout(name: name, placements: []) }
 }

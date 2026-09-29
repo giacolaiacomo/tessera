@@ -147,116 +147,118 @@ enum AX {
 
     /// Moves and resizes a window to a Cocoa-coordinate rect.
     ///
-    /// Position, size, position — and up to three times. One pass is not enough because the two
-    /// attributes fight each other: growing a window near an edge makes macOS shove it back on
-    /// screen (so the position set before the size is lost), while shrinking it first can make an
-    /// app clamp to its own minimum. Setting position last is what actually gets the window where
-    /// it was asked to go; the extra passes converge on apps that resize in steps.
-    @discardableResult
-    static func setFrame(_ window: AXUIElement, to rect: CGRect) -> Bool {
-        if case .placed = place(window, at: rect) { return true }
-        return false
+    /// The on-screen window list: pid and frame of everything visible on the current Space,
+    /// frontmost first. Only pid and bounds are read, which need no Screen Recording permission
+    /// — window titles would.
+    private static func onScreenEntries() -> [(pid: pid_t, bounds: CGRect)] {
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                              kCGNullWindowID) as? [[String: Any]] ?? []
+        return info.compactMap { entry in
+            guard let pid = entry[kCGWindowOwnerPID as String] as? pid_t,
+                  let dict = entry[kCGWindowBounds as String] as? [String: CGFloat],
+                  let bounds = CGRect(dictionaryRepresentation: dict as CFDictionary)
+            else { return nil }
+            return (pid, bounds)
+        }
     }
 
-    /// Why a window did not end up exactly where it was asked to go. Kept in the open because
-    /// "it moved but did not resize" is the failure people actually hit, and a silent Bool made
-    /// it impossible to tell an app's minimum size from a refused request.
+    /// Drops the windows that are not on the current Space, so arranging one desktop never
+    /// shuffles the windows sitting on another.
+    static func onCurrentSpace(_ windows: [ManagedWindow]) -> [ManagedWindow] {
+        // Presence is judged per app, not per window: a window's AX frame and its CG bounds can
+        // disagree by a pixel mid-animation, and dropping a real window is worse than keeping one.
+        let pids = Set(onScreenEntries().map(\.pid))
+        return windows.filter { pids.contains($0.pid) }
+    }
+
+    /// Windows in front-to-back order, as CoreGraphics sees them. The Accessibility API exposes
+    /// no z-order, so each window is matched against the on-screen list by pid and frame.
+    static func sortedFrontToBack(_ windows: [ManagedWindow]) -> [ManagedWindow] {
+        let entries = onScreenEntries()
+        func depth(of window: ManagedWindow) -> Int {
+            guard let frame = window.frame else { return entries.count }
+            let axFrame = toAX(frame)
+            let index = entries.firstIndex {
+                $0.pid == window.pid
+                    && abs($0.bounds.minX - axFrame.minX) < 3 && abs($0.bounds.minY - axFrame.minY) < 3
+            }
+            return index ?? entries.count   // anything unmatched sinks to the back
+        }
+        return windows.map { (window: $0, depth: depth(of: $0)) }
+            .sorted { $0.depth < $1.depth }
+            .map(\.window)
+    }
+
+    /// How a window answered. Apps with a minimum or a step size (Terminal snaps to whole
+    /// character rows) cannot land exactly, and that is their business, not a failure to chase.
     enum PlacementOutcome {
         case placed
-        /// In the right place, but the app chose its own size: a minimum, a fixed size, or a
-        /// step (Terminal snaps to whole character rows).
-        case resizedByApp(CGSize)
-        case refused(position: AXError, size: AXError, landed: CGRect?, why: String)
+        case ownSize(CGSize)
+        case didNotMove(CGRect?)
 
         var succeeded: Bool {
-            if case .refused = self { return false }
+            if case .didNotMove = self { return false }
             return true
         }
 
         var describedInItalian: String {
             switch self {
             case .placed: return "ok"
-            case .resizedByApp(let size):
-                return "in posizione, ma l'app impone \(Int(size.width))×\(Int(size.height))"
-            case .refused(let position, let size, let landed, let why):
-                return "rifiutata (posizione \(position.rawValue), dimensione \(size.rawValue))"
-                    + (landed.map { ", è rimasta \(Int($0.origin.x)),\(Int($0.origin.y)) \(Int($0.width))×\(Int($0.height))" } ?? "")
-                    + " — \(why)"
+            case .ownSize(let size): return "l'app impone \(Int(size.width))×\(Int(size.height))"
+            case .didNotMove(let landed):
+                return "non si è mossa" + (landed.map { ", è a \(Int($0.minX)),\(Int($0.minY))" } ?? "")
             }
         }
     }
 
-    static func place(_ window: AXUIElement, at rect: CGRect) -> PlacementOutcome {
+    /// Sets a window's frame: move, resize, move. No reads, no retries.
+    ///
+    /// The order is the whole trick. Resize first and the window grows where there is no room,
+    /// so macOS pushes it back on screen and the new size is lost — which looks exactly like an
+    /// app refusing to be resized. Move it to the free spot first, then it can grow into it:
+    /// an AX resize keeps the top-left corner, so the move stays good.
+    ///
+    /// `shrinkFirst` is for a window that currently fills the screen: it ignores a resize until
+    /// it leaves that state, and the caller knows that from the frame it already has.
+    @discardableResult
+    static func writeFrame(_ window: AXUIElement, to rect: CGRect,
+                           shrinkFirst: Bool = false) -> (position: AXError, size: AXError) {
         let target = toAX(rect)
         var origin = CGPoint(x: target.minX, y: target.minY)
         var size = CGSize(width: target.width, height: target.height)
-        var positionError = AXError.success
-        var sizeError = AXError.success
 
-        func set(_ attribute: String, _ value: AXValue?) -> AXError {
+        func write(_ attribute: CFString, _ value: AXValue?) -> AXError {
             guard let value else { return .failure }
-            return AXUIElementSetAttributeValue(window, attribute as CFString, value)
+            return AXUIElementSetAttributeValue(window, attribute, value)
         }
 
-        for pass in 0..<3 {
-            positionError = set(kAXPositionAttribute as String, AXValueCreate(.cgPoint, &origin))
-            sizeError = set(kAXSizeAttribute as String, AXValueCreate(.cgSize, &size))
-            _ = set(kAXPositionAttribute as String, AXValueCreate(.cgPoint, &origin))
-            // Electron and Catalyst windows apply a resize asynchronously: reading the frame
-            // straight away reports the old one and makes a good placement look refused.
-            if pass > 0 { usleep(120_000) }
-            guard let landed = frame(of: window) else { break }
-            // Compare the top-left corner in AX coordinates — the very thing that was set.
-            // Checking the Cocoa origin instead would call a correct placement a failure
-            // whenever the app picked its own height, since that origin is derived from it.
-            let landedAX = toAX(landed)
-            let placed = abs(landedAX.minX - target.minX) < 2 && abs(landedAX.minY - target.minY) < 2
-            let sized = abs(landed.width - rect.width) < 2 && abs(landed.height - rect.height) < 2
-            if placed && sized { return .placed }
-            // An app that imposes its own size cannot honour both corners: accept either one.
-            // iPhone Mirroring, for instance, grows upwards from the bottom-left it was given.
-            var anchored = placed
-                || (abs(landed.minX - rect.minX) < 2 && abs(landed.minY - rect.minY) < 2)
-            // An app whose minimum size is bigger than the cell cannot sit in it, and macOS
-            // shoves it back on screen so neither corner lines up. If it still covers the cell
-            // it was sent to, it went where it was told — it just does not fit.
-            if !anchored, landed.width > rect.width || landed.height > rect.height {
-                let overlap = landed.intersection(rect)
-                anchored = !overlap.isNull
-                    && overlap.width * overlap.height > rect.width * rect.height * 0.5
-            }
-            // Give an app that is mid-animation one more pass before calling it a refusal.
-            if anchored && pass > 0 { return .resizedByApp(landed.size) }
-            // A maximised window accepts a position and quietly ignores a size. Shaking it to a
-            // small size first breaks that state without touching the zoom button, which on
-            // Electron and Catalyst apps means "full screen" and would make things worse.
-            if !sized, let screen = NSScreen.screens.first(where: { $0.frame.intersects(landed) }),
-               abs(landed.width - screen.visibleFrame.width) < 4,
-               abs(landed.height - screen.visibleFrame.height) < 4 {
-                var nudge = CGSize(width: 400, height: 300)
-                _ = set(kAXSizeAttribute as String, AXValueCreate(.cgSize, &nudge))
-                usleep(120_000)
-            }
+        if shrinkFirst {
+            var small = CGSize(width: min(size.width, 600), height: min(size.height, 400))
+            _ = write(kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &small))
         }
-        return .refused(position: positionError, size: sizeError, landed: frame(of: window),
-                        why: describeResistance(window))
+        let positionError = write(kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &origin))
+        let sizeError = write(kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &size))
+        // Nothing is read back here. An app answers a write on its own run loop, so a read taken
+        // straight after returns the frame from before it — and a third write decided on that
+        // stale answer cancels the resize still in flight. The caller waits, then looks.
+        return (positionError, sizeError)
     }
 
-    /// The handful of window properties that explain a refusal: whether the attributes are
-    /// settable at all, whether the window is full screen, and whether it has a zoom button.
-    private static func describeResistance(_ window: AXUIElement) -> String {
-        var sizeSettable: DarwinBoolean = false
-        var positionSettable: DarwinBoolean = false
-        AXUIElementIsAttributeSettable(window, kAXSizeAttribute as CFString, &sizeSettable)
-        AXUIElementIsAttributeSettable(window, kAXPositionAttribute as CFString, &positionSettable)
-        let full = attribute(window, "AXFullScreen", NSNumber.self)?.boolValue
-        var zoom: CFTypeRef?
-        let hasZoom = AXUIElementCopyAttributeValue(window, kAXZoomButtonAttribute as CFString,
-                                                    &zoom) == .success
-        let subrole = attribute(window, kAXSubroleAttribute as String, String.self) ?? "?"
-        return "size settabile \(sizeSettable.boolValue), position settabile \(positionSettable.boolValue)"
-            + ", AXFullScreen \(full.map(String.init) ?? "assente"), zoom button \(hasZoom)"
-            + ", subrole \(subrole)"
+    /// Reads where a window ended up. Touches nothing.
+    static func inspect(_ window: AXUIElement, against rect: CGRect) -> PlacementOutcome {
+        guard let landed = frame(of: window) else { return .didNotMove(nil) }
+        let target = toAX(rect)
+        let landedAX = toAX(landed)
+        let corner = abs(landedAX.minX - target.minX) < 2 && abs(landedAX.minY - target.minY) < 2
+        // A window that snaps to its own grid (Terminal to character rows) lands a few pixels
+        // off and still fills its cell: that is placed, not an app imposing a size.
+        let sized = abs(landed.width - rect.width) < 20 && abs(landed.height - rect.height) < 20
+        if corner && sized { return .placed }
+        // An app that keeps its own size cannot honour both corners, and macOS pushes an
+        // oversized window back on screen: it counts as placed if it covers its cell.
+        let overlap = landed.intersection(rect)
+        let covers = !overlap.isNull && overlap.width * overlap.height > rect.width * rect.height * 0.5
+        return corner || covers ? .ownSize(landed.size) : .didNotMove(landed)
     }
 
     /// Windows that are in full screen, which `allWindows()` deliberately leaves out.
@@ -292,58 +294,13 @@ enum AX {
     /// Places a window into a cell of the grid of the screen it should live on.
     @discardableResult
     static func place(_ window: ManagedWindow, in cell: CellRect, on screen: NSScreen) -> Bool {
-        outcome(placing: window, in: cell, on: screen).succeeded
-    }
-
-    static func outcome(placing window: ManagedWindow, in cell: CellRect,
-                        on screen: NSScreen) -> PlacementOutcome {
         let grid = Store.shared.config.grid(for: screen.tesseraKey)
-        return place(window.element, at: Geometry.frame(for: cell, in: grid, on: screen.visibleFrame))
-    }
-
-    /// The on-screen window list: pid and frame of everything visible on the current Space,
-    /// frontmost first. Only pid and bounds are read, which need no Screen Recording permission
-    /// — window titles would.
-    private static func onScreenEntries() -> [(pid: pid_t, bounds: CGRect)] {
-        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
-                                              kCGNullWindowID) as? [[String: Any]] ?? []
-        return info.compactMap { entry in
-            guard let pid = entry[kCGWindowOwnerPID as String] as? pid_t,
-                  let dict = entry[kCGWindowBounds as String] as? [String: CGFloat],
-                  let bounds = CGRect(dictionaryRepresentation: dict as CFDictionary)
-            else { return nil }
-            return (pid, bounds)
-        }
-    }
-
-    /// Drops the windows that are not on the current Space, so arranging one desktop never
-    /// shuffles the windows sitting on another.
-    static func onCurrentSpace(_ windows: [ManagedWindow]) -> [ManagedWindow] {
-        // Presence is judged per app, not per window: a window's AX frame and its CG bounds can
-        // disagree by a pixel mid-animation, and dropping a real window is worse than keeping one.
-        let pids = Set(onScreenEntries().map(\.pid))
-        return windows.filter { pids.contains($0.pid) }
-    }
-
-    /// Windows in front-to-back order, as CoreGraphics sees them.
-    ///
-    /// The Accessibility API exposes no z-order, so we match each window against the on-screen
-    /// window list by pid and frame.
-    static func sortedFrontToBack(_ windows: [ManagedWindow]) -> [ManagedWindow] {
-        // Index 0 is the frontmost window; anything we cannot match sinks to the back.
-        let entries = onScreenEntries()
-        func depth(of window: ManagedWindow) -> Int {
-            guard let frame = window.frame else { return entries.count }
-            let axFrame = toAX(frame)
-            let index = entries.firstIndex {
-                $0.pid == window.pid
-                    && abs($0.bounds.minX - axFrame.minX) < 3 && abs($0.bounds.minY - axFrame.minY) < 3
-            }
-            return index ?? entries.count
-        }
-        return windows.map { (window: $0, depth: depth(of: $0)) }
-            .sorted { $0.depth < $1.depth }
-            .map(\.window)
+        let target = Geometry.frame(for: cell, in: grid, on: screen.visibleFrame)
+        let current = window.frame ?? .zero
+        let fillsScreen = abs(current.width - screen.visibleFrame.width) < 4
+            && abs(current.height - screen.visibleFrame.height) < 4
+        writeFrame(window.element, to: target, shrinkFirst: fillsScreen)
+        return true
     }
 
     /// The screen a window mostly sits on.

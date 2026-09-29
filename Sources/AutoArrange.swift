@@ -154,51 +154,78 @@ enum AutoArrange {
 
     // MARK: Applying
 
-    /// Arranges the given windows on one screen. Returns how many actually moved.
+    /// Arranges the windows of one screen: work out every rectangle first, then set each
+    /// window once.
     ///
-    /// The grid is a promise about sizes: a 3×2 means six tiles, not "as many slivers as there
-    /// are windows". So only the frontmost `cols × rows` windows are tiled and everything
-    /// further back is left exactly where it is.
+    /// There is nothing to discover at run time. The screen size is known, the window count is
+    /// known, so the grid and every target rectangle are known — the arrangement is a piece of
+    /// arithmetic, not a negotiation. A window is written once and left alone; the read at the
+    /// end is only for the report, and moves nothing.
+    ///
+    /// The grid is also a promise about sizes: a 3×2 means six tiles, not "as many slivers as
+    /// there are windows", so only the frontmost `cols × rows` windows are tiled and the rest
+    /// stay where they are.
     @discardableResult
     static func apply(_ windows: [ManagedWindow], on screen: NSScreen,
                       strategy: ArrangeStrategy) -> Int {
-        let grid = Store.shared.config.grid(for: screen.tesseraKey)
-        let aspect = screen.visibleFrame.width / screen.visibleFrame.height
-        lastOutcomes = []
+        let grid = refreshAutoGrid(on: screen)
+        let visible = screen.visibleFrame
         let chosen = AX.sortedFrontToBack(windows).prefix(grid.cols * grid.rows)
-        // Left-to-right, top-to-bottom: keep the arrangement close to where things already were,
-        // so windows travel the shortest distance to their tile.
+        // Reading order, so each window ends up near where it already was.
         let ordered = chosen.sorted { a, b in
-            let fa = a.frame ?? .zero, fb = b.frame ?? .zero
+            let fa = a.frame ?? CGRect.zero, fb = b.frame ?? CGRect.zero
             return fa.minX == fb.minX ? fa.maxY > fb.maxY : fa.minX < fb.minX
         }
-        let cells = partition(count: ordered.count, grid: grid, screenAspect: aspect, strategy: strategy)
-        let pairs = Array(zip(ordered, cells))
-        for (window, cell) in pairs {
-            _ = AX.outcome(placing: window, in: cell, on: screen)
-        }
-        // Settle: several apps adjust themselves after a resize — Terminal snaps to whole
-        // character rows, Chromium restores its own position — so a single pass leaves windows
-        // a few dozen pixels from where they were sent. Re-place whatever drifted, twice.
-        for _ in 0..<2 {
-            usleep(250_000)
-            let drifted = pairs.filter { window, cell in
-                guard let frame = window.frame else { return false }
-                let target = Geometry.frame(for: cell, in: grid, on: screen.visibleFrame)
-                return abs(frame.minX - target.minX) > 4 || abs(frame.maxY - target.maxY) > 4
-            }
-            if drifted.isEmpty { break }
-            for (window, cell) in drifted { _ = AX.outcome(placing: window, in: cell, on: screen) }
+        let cells = partition(count: ordered.count, grid: grid,
+                              screenAspect: visible.width / visible.height, strategy: strategy,
+                              masterFraction: Store.shared.config.masterFraction)
+        let moves = zip(ordered, cells).map { window, cell in
+            (window: window, target: Geometry.frame(for: cell, in: grid, on: visible))
         }
 
-        lastOutcomes = []
-        var moved = 0
-        for (window, cell) in pairs {
-            let outcome = AX.outcome(placing: window, in: cell, on: screen)
-            if outcome.succeeded { moved += 1 }
-            lastOutcomes.append((window.appName, outcome))
+        var errors: [String] = []
+        for (window, target) in moves {
+            // An app answers on its own run loop: two windows of the same app go through one
+            // process, and fired back to back it keeps the first and drops the rest. A pause
+            // too short to see is all it needs to keep up.
+            let current = window.frame ?? CGRect.zero
+            // A window filling the screen ignores a resize until it leaves that state.
+            let fillsScreen = abs(current.width - visible.width) < 4
+                && abs(current.height - visible.height) < 4
+            let result = AX.writeFrame(window.element, to: target, shrinkFirst: fillsScreen)
+            errors.append("pos \(result.position.rawValue)/size \(result.size.rawValue)"
+                          + " chiesto \(Int(target.width))×\(Int(target.height))")
+            usleep(80_000)
         }
-        return moved
+
+        // Everyone has been told once. After a moment to answer, a single corrective write goes
+        // only to the windows still far from their cell — a window keeping its own minimum size
+        // is within tolerance and is left alone.
+        usleep(250_000)
+        func missedIts(_ target: CGRect, _ window: AXUIElement) -> Bool {
+            guard let now = AX.frame(of: window) else { return false }
+            // Judged on the AX corner: a window that snaps to its own row height keeps that
+            // corner and only its bottom moves, so it is not chased for nothing.
+            let here = AX.toAX(now), there = AX.toAX(target)
+            return abs(here.minX - there.minX) > 4 || abs(here.minY - there.minY) > 4
+                || abs(here.width - there.width) > 24 || abs(here.height - there.height) > 24
+        }
+        var corrected = false
+        for (window, target) in moves where missedIts(target, window.element) {
+            AX.writeFrame(window.element, to: target)
+            usleep(80_000)
+            corrected = true
+        }
+        if corrected { usleep(250_000) }
+
+        lastOutcomes = zip(moves, errors).map { move, error in
+            let outcome = AX.inspect(move.window.element, against: move.target)
+            if case .didNotMove = outcome {
+                return (move.window.appName + " [\(error)]", outcome)
+            }
+            return (move.window.appName, outcome)
+        }
+        return lastOutcomes.filter { $0.outcome.succeeded }.count
     }
 
     /// What happened to each window in the last arrangement, for `--arrange` to report.
@@ -220,6 +247,71 @@ enum AutoArrange {
             // Compare by screen key, not object identity: NSScreen hands out fresh instances.
             return AX.screen(of: window).tesseraKey == key
         }
+    }
+
+    // MARK: Choosing the grid for you
+
+    /// The grid that shows `n` windows at once on this screen, all of them visible.
+    ///
+    /// Two things are traded off: tiles should be roughly `targetAspect` (a window is more
+    /// usable wide than tall), and cells should not be left over. On a 34" ultrawide four
+    /// windows come out 2×2, six come out 3×2; on the laptop four come out 2×2 as well.
+    static func bestGrid(for n: Int, on screen: NSScreen, like existing: GridSpec,
+                         targetAspect: CGFloat = 1.45) -> GridSpec {
+        bestGrid(for: n, fitting: screen.visibleFrame, like: existing, targetAspect: targetAspect)
+    }
+
+    static func bestGrid(for n: Int, fitting frame: CGRect, like existing: GridSpec,
+                         targetAspect: CGFloat = 1.45) -> GridSpec {
+        guard n > 0, frame.height > 0 else { return existing }
+        let aspect = frame.width / frame.height
+        var best = (cols: 1, rows: n)
+        var bestScore = CGFloat.greatestFiniteMagnitude
+        for cols in 1...n {
+            let rows = Int(ceil(Double(n) / Double(cols)))
+            let spare = cols * rows - n
+            // A couple of empty cells are tolerable if they buy a much better shape; a grid
+            // that is mostly holes is not what "show me everything" means.
+            guard spare <= max(1, n / 3) else { continue }
+            let tileAspect = (aspect / CGFloat(cols)) * CGFloat(rows)
+            let score = abs(log(tileAspect / targetAspect)) + CGFloat(spare) * 0.35
+            if score < bestScore {
+                bestScore = score
+                best = (cols, rows)
+            }
+        }
+        return GridSpec(cols: best.cols, rows: best.rows,
+                        outerGap: existing.outerGap, innerGap: existing.innerGap)
+    }
+
+    /// Set while an automatic grid is being written, so the "re-tile when the grid changes"
+    /// rule does not fire: opening the popover must never move someone's windows.
+    private(set) static var isWritingAutoGrid = false
+
+    /// Stores a computed grid without waking the "re-tile when the grid changes" rule.
+    static func writeGrid(_ grid: GridSpec, for screenKey: String) {
+        guard Store.shared.config.grid(for: screenKey) != grid else { return }
+        isWritingAutoGrid = true
+        Store.shared.mutate { $0.grids[screenKey] = grid }
+        isWritingAutoGrid = false
+    }
+
+    /// Brings a screen's stored grid in line with how many windows are open, when that screen
+    /// is in automatic mode. Returns the grid to use either way.
+    ///
+    /// Only an arrangement may call this. Recomputing it on every read — a popover opening, a
+    /// diagnostic — made the grid shift under the windows that were already placed in it: you
+    /// tile four windows into 2×2, close one, and the layout you were looking at is suddenly
+    /// described by a 3×1 grid nobody applied.
+    @discardableResult
+    static func refreshAutoGrid(on screen: NSScreen) -> GridSpec {
+        let key = screen.tesseraKey
+        let config = Store.shared.config
+        let current = config.grid(for: key)
+        guard config.isAutoGrid(key) else { return current }
+        let wanted = bestGrid(for: windows(on: screen).count, on: screen, like: current)
+        writeGrid(wanted, for: key)
+        return wanted
     }
 
     // MARK: What the screen looks like right now
@@ -307,3 +399,4 @@ enum AutoArrange {
         return AX.place(window, in: cell, on: screen)
     }
 }
+
