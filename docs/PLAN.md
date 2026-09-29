@@ -31,7 +31,7 @@ Swift + AppKit/SwiftUI, nessuna dipendenza, build con `swiftc Sources/*.swift` (
 
 ## Ledger
 
-**Next action:** pubblicare: repo pubblico giacolaiacomo/tessera, tag v1.0.0, release e formula nel tap. Poi Gianluca prova a mano popover, hotkey e disposizioni salvate.
+**Next action:** aspettare il riscontro di Fabio Sola su Swift 6.4 (`brew update && brew upgrade tessera`): è l'unica macchina con quel compilatore. Poi Gianluca prova a mano ⌥-drag, scambio al rilascio, hotkey delle zone e layout salvati — mai esercitati dal vivo.
 
 | Data | Compito | Commit | Verdetto | Note |
 |---|---|---|---|---|
@@ -193,3 +193,21 @@ Aveva ragione due volte.
 | 2026-09-29 | Inglese + tabella italiana (lotto delegato) | — | fatto | typecheck pulito, test verdi, nessun residuo fuori tabella; prova dal vivo in entrambe le lingue |
 | 2026-09-29 | Impalcatura repo (lotto delegato) | — | fatto | `--diagnose` del README rigenerato da me con l'output vero, versione portata a 1.0.0 |
 | 2026-09-29 | Immagini README (lotto delegato) | — | fatto | guardate una per una, GIF inclusa |
+
+### Round 6 — 1.1.1, il compilatore di qualcun altro
+
+Il giorno dopo la 1.1.0 Fabio Sola (macOS 27.0.1, Apple Silicon, **Swift 6.4**) non riesce a
+installare: `brew install` fallisce in compilazione con
+`Sources/MenuBar.swift:247:17: error: cannot assign to property: 'self' is immutable`.
+Causa: lo stato del gesto di drag stava in quattro `@State` assegnate **dentro le closure del
+gesto**; funziona solo grazie al setter `nonmutating` del wrapper, Swift 6.2 lo accetta senza una
+parola e **6.4 lo rifiuta**. Corretto spostando lo stato in un `DragState: ObservableObject`
+(`@StateObject`): in `Sources/` non resta nessuna `@State`. Non riproducibile in locale (qui Xcode
+26.3 / Swift 6.2, e anche `-swift-version 5` passa), quindi la verifica vera è la macchina di Fabio.
+Nella stessa passata: durante il trascinamento su una cella occupata si vede **in anticipo** quale
+finestra verrà scambiata, disegnata sbiadita e con il suo nome nella cella che si sta liberando.
+
+| Data | Compito | Commit | Verdetto | Note |
+|---|---|---|---|---|
+| 2026-09-29 | Fix Swift 6.4 + anteprima dello scambio | c8c8330 | fatto | test geometria verdi, typecheck pulito, fotogrammi della GIF guardati uno a uno; `brew audit --strict --online` pulito, install dal tarball v1.1.1, `brew test`, disinstallata; CI verde su tag e su main |
+| 2026-09-29 | Release 1.1.1 + formula nel tap | c8c8330 + | fatto | sha256 f85cb23e…, social preview caricata a mano da Gianluca |
