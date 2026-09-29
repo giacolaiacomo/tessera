@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+- **An arrangement is about twenty times faster.** Measured on a 1512×892 laptop with six windows
+  that all really move: **1584 ms before, 65 ms now**; on an ultrawide with four, 263 ms → 46 ms.
+  Almost none of that was the windows. The writes themselves take 2–13 ms; the rest was Tessera
+  sleeping — a flat 90 ms before it dared look at the result and a flat 150 ms at the end,
+  whether or not anything had happened. Tessera now waits for the only thing that can actually
+  be observed, the frames going still, and leaves the moment they do.
+- **Fixed: apps with a minimum size were nudged for nothing.** The test for "this window has
+  answered" asked whether it was sitting on its cell's corner, so an app that refused the size of
+  its cell — Mail, Calendar, Xcode, System Settings — looked like a window that had never
+  replied. Every arrangement waited out the full timeout for them and then wrote a second time to
+  windows that had already said no. Five such pointless writes per arrangement on a normal
+  laptop screen; now none.
+- **Moving one window from the map no longer pauses.** A placement waited a tenth of a second
+  before checking on the window and the map waited a further third of a second before redrawing,
+  so a drag — and a swap, which is two placements — spent about half a second doing nothing
+  visible. Both waits are now a look.
+- `--arrange` reports where the milliseconds went and how far each window ended up from its
+  cell, so "it lags" and "it is not precise" can be answered with a number instead of an
+  impression.
+- An Accessibility call cannot hang the app any more: a window server round trip to another app
+  is synchronous and the default timeout is generous, so one busy app could freeze the menu bar
+  for seconds. It gives up after 1.5 s and says so.
+
 ## 1.1.1 — 2026-09-29
 
 - **Fixed: Tessera would not compile with Swift 6.4**, so `brew install` failed on an up-to-date

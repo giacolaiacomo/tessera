@@ -833,10 +833,9 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         }
         OverlayController.shared.flash(cell: cell, on: screen)
         AX.place(occupant.window, in: cell, on: screen)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self, self.popover.isShown else { return }
-            self.model.reload(window: self.capturedWindow)
-        }
+        // `place` only returns once the windows have stopped moving, so the map can be redrawn
+        // now. It used to wait a further third of a second here, on the chance that they had not.
+        if popover.isShown { model.reload(window: capturedWindow) }
     }
 
     func fitFocused() {

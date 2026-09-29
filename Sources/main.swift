@@ -247,6 +247,7 @@ final class AppController {
                     ? tr("1 window needed a second nudge.")
                     : String(format: tr("%d windows needed a second nudge."),
                              AutoArrange.lastCorrections)))
+                + "\n" + AutoArrange.lastTiming
             let report = (moved == 1
                 ? String(format: tr("Screen %@: 1 window arranged with the “%@” arrangement."),
                          screen.localizedName, strategy.label)
@@ -262,6 +263,7 @@ final class AppController {
     // MARK: Lifecycle
 
     func start() {
+        _ = AX.messagingTimeout
         MenuBarController.shared.install()
         HotkeyManager.shared.reload()
         NewWindowWatcher.shared.setEnabled(store.config.autoFitNewWindows)

@@ -272,9 +272,11 @@ enum AutoArrange {
     @discardableResult
     static func apply(_ windows: [ManagedWindow], on screen: NSScreen,
                       strategy: ArrangeStrategy) -> Int {
+        let clock = Clock()
         let grid = refreshAutoGrid(on: screen)
         let visible = screen.visibleFrame
         let moves = moves(for: windows, on: screen, grid: grid, strategy: strategy)
+        clock.mark("plan")
 
         var errors: [String] = []
         var before: [CGRect] = []
@@ -289,6 +291,7 @@ enum AutoArrange {
             errors.append("pos \(result.position.rawValue)/size \(result.size.rawValue)"
                           + " asked \(Int(target.width))×\(Int(target.height))")
         }
+        clock.mark("write")
 
         func landed(_ index: Int) -> Bool {
             guard let now = AX.frame(of: moves[index].window.element) else { return true }
@@ -297,48 +300,38 @@ enum AutoArrange {
                 && abs(here.width - there.width) <= 24 && abs(here.height - there.height) <= 24
         }
 
-        /// Whether a window has said its piece — landed, or taken the corner and kept its own
-        /// size, which is an app with a minimum larger than the cell and an answer, not a
-        /// failure. Only a window that did neither is worth writing to twice.
-        func settled(_ index: Int) -> Bool {
-            if landed(index) { return true }
-            guard let now = AX.frame(of: moves[index].window.element) else { return true }
-            let here = AX.toAX(now), there = AX.toAX(moves[index].target)
-            let corner = abs(here.minX - there.minX) <= 4 && abs(here.minY - there.minY) <= 4
-            let keptItsSize = abs(now.width - before[index].width) <= 2
-                && abs(now.height - before[index].height) <= 2
-            // Or it shrank as far as it goes and stopped: still bigger than the cell in the
-            // dimension it would not give up. Either way it answered, and writing again only
-            // asks the same question twice.
-            let shrankToItsMinimum = now.width > moves[index].target.width + 2
-                || now.height > moves[index].target.height + 2
-            return corner && (keptItsSize || shrankToItsMinimum)
-        }
-
         // Everyone has been told once. Now wait for the answers — an app applies the write on
         // its own run loop and takes its own time, and reading before it has is what used to
-        // make Tessera "correct" a move that was still in flight. Reading costs nothing and
-        // moves nothing, so this waits by looking: it stops the moment every window has
-        // answered, and gives up after a beat on the ones that never will.
-        for _ in 0..<8 {
-            usleep(90_000)
-            if moves.indices.allSatisfy(settled) { break }
+        // make Tessera "correct" a move that was still in flight.
+        //
+        // What is waited for is the one thing that can actually be observed: the frames have
+        // stopped changing. Two identical reads in a row and the screen is done moving. Every
+        // cleverer test tried here was a guess about what an app meant — "is it on its corner?"
+        // read an app with a minimum size as a window that never answered, and "did anything
+        // change?" read a window that was already in its final place as a dropped write. Both
+        // guesses cost the full timeout and then a pointless second write. Stillness is not a
+        // guess.
+        var rounds = 0
+        var previous: [CGRect?] = before.map { $0 }
+        let giveUp = DispatchTime.now().uptimeNanoseconds + 400_000_000
+        while DispatchTime.now().uptimeNanoseconds < giveUp {
+            usleep(12_000)
+            rounds += 1
+            let now = moves.map { AX.frame(of: $0.window.element) }
+            let still = zip(now, previous).allSatisfy(AX.same)
+            previous = now
+            if still && rounds > 1 { break }
         }
+        clock.mark("settle ×\(rounds)")
 
-        // One retry, only for a window that neither moved nor resized: that is a write the app
-        // dropped, and a second one usually takes.
-        var retried = false
-        for index in moves.indices where !settled(index) {
-            AX.writeFrame(moves[index].window.element, to: moves[index].target)
-            lastCorrections += 1
-            retried = true
-        }
-        if retried { usleep(250_000) }
 
-        // What is left is an app that will not take the size of its cell. It keeps its size —
-        // that is its right — but it must not be left hanging off the edge of the screen, which
-        // is what happens when a window taller than its cell is hung from the cell's top-left.
-        // So: same size, the cell's top-left corner, slid back inside the visible area.
+        // One corrective pass, and it is the same one for both things that can have gone wrong:
+        // a write the app dropped, and an app that refused the size of its cell and is now
+        // hanging off the edge of the screen. Either way the answer is the same — keep whatever
+        // size the window has settled on, put its top-left on the cell's corner, and slide it
+        // back inside the visible area. Writing a position a window already holds costs nothing
+        // and moves nothing, so this does not need to know which case it is looking at.
+        var slid = false
         for index in moves.indices {
             guard let now = AX.frame(of: moves[index].window.element), !landed(index) else { continue }
             let target = moves[index].target
@@ -350,8 +343,24 @@ enum AutoArrange {
                                 max(visible.minY, visible.maxY - rect.height))
             guard abs(rect.minX - now.minX) > 2 || abs(rect.minY - now.minY) > 2 else { continue }
             AX.writeFrame(moves[index].window.element, to: rect)
+            lastCorrections += 1
+            slid = true
         }
-        usleep(150_000)
+        // Only a window that was actually slid needs time to answer before the report reads it,
+        // and it is asked by looking, like everything else here. This used to be a flat tenth of
+        // a second paid on every arrangement, including the ones where nothing moved at all.
+        if slid {
+            var previous = moves.map { AX.frame(of: $0.window.element) }
+            let until = DispatchTime.now().uptimeNanoseconds + 200_000_000
+            while DispatchTime.now().uptimeNanoseconds < until {
+                usleep(12_000)
+                let now = moves.map { AX.frame(of: $0.window.element) }
+                let still = zip(now, previous).allSatisfy(AX.same)
+                previous = now
+                if still { break }
+            }
+        }
+        clock.mark("slide")
 
         lastOutcomes = zip(moves, errors).map { move, error in
             let outcome = AX.inspect(move.window.element, against: move.target)
@@ -361,7 +370,44 @@ enum AutoArrange {
             return (move.window.appName, outcome)
         }
         learn(from: zip(moves, lastOutcomes).map { (window: $0.window, outcome: $1.outcome) })
+        clock.mark("report")
+        lastTiming = clock.report(offBy: moves.indices.map { index in
+            guard let now = AX.frame(of: moves[index].window.element) else { return .zero }
+            let here = AX.toAX(now), there = AX.toAX(moves[index].target)
+            return CGRect(x: here.minX - there.minX, y: here.minY - there.minY,
+                          width: here.width - there.width, height: here.height - there.height)
+        })
         return lastOutcomes.filter { $0.outcome.succeeded }.count
+    }
+
+    /// Where the milliseconds of the last arrangement went, and how far off its target each
+    /// window ended up. "It lags" and "it is not precise" are not things anyone can fix; a line
+    /// saying the waiting cost 240 ms of the 260, and that Terminal landed 3 px short, is.
+    private(set) static var lastTiming = ""
+
+    /// A stopwatch with named laps. Nothing here touches a window.
+    final class Clock {
+        private let start = DispatchTime.now()
+        private var last = DispatchTime.now()
+        private var laps: [(name: String, ms: Double)] = []
+
+        func mark(_ name: String) {
+            let now = DispatchTime.now()
+            laps.append((name, Double(now.uptimeNanoseconds - last.uptimeNanoseconds) / 1e6))
+            last = now
+        }
+
+        func report(offBy: [CGRect]) -> String {
+            let total = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e6
+            let breakdown = laps.map { "\($0.name) \(Int($0.ms.rounded()))" }.joined(separator: ", ")
+            let drift = offBy.map { rect -> String in
+                let values = [rect.minX, rect.minY, rect.width, rect.height]
+                return values.allSatisfy { abs($0) < 0.5 }
+                    ? "exact"
+                    : "\(Int(rect.minX)),\(Int(rect.minY)) \(Int(rect.width))×\(Int(rect.height))"
+            }.joined(separator: " | ")
+            return "  timing: \(Int(total.rounded())) ms — \(breakdown)\n  off target: \(drift)"
+        }
     }
 
     /// What happened to each window in the last arrangement, for `--arrange` to report.

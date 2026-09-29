@@ -22,6 +22,15 @@ enum AX {
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
+    /// Every read and write below is a synchronous round trip to another app, and the default
+    /// timeout is generous enough that one busy app can hold the whole arrangement — and, since
+    /// this runs on the main thread, the menu bar with it — for seconds. Tessera would rather
+    /// report a window it could not reach in time than stop being an app. Set on the system-wide
+    /// element, this is the default for every element we touch.
+    static let messagingTimeout: Void = {
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 1.5)
+    }()
+
     /// Shows the system prompt once; returns the state as of right now.
     @discardableResult
     static func requestTrust() -> Bool {
@@ -320,17 +329,44 @@ enum AX {
         let fillsScreen = abs(current.width - screen.visibleFrame.width) < 4
             && abs(current.height - screen.visibleFrame.height) < 4
         writeFrame(window.element, to: target, shrinkFirst: fillsScreen)
-        keepOnScreen(window.element, hungFrom: target, within: screen.visibleFrame)
+        keepOnScreen(window.element, hungFrom: target, within: screen.visibleFrame, wasAt: current)
         return true
+    }
+
+    /// Two frames that are the same to the nearest pixel.
+    static func same(_ a: CGRect?, _ b: CGRect?) -> Bool {
+        guard let a, let b else { return a == nil && b == nil }
+        return abs(a.minX - b.minX) < 1 && abs(a.minY - b.minY) < 1
+            && abs(a.width - b.width) < 1 && abs(a.height - b.height) < 1
+    }
+
+    /// A window's frame, once it has stopped moving. An app applies a write on its own run loop,
+    /// so the answer is never ready at once — but a fixed pause pays the slowest app's price on
+    /// every placement, and that flat tenth of a second was most of what a drag on the map felt
+    /// like. This looks instead, every 12 ms, and leaves as soon as the frame has both changed
+    /// and stopped changing. A frame that never changes is the other real case — the window was
+    /// already where it was asked to go — so after a short grace that counts as an answer too.
+    static func frameOnceStill(of window: AXUIElement, wasAt before: CGRect?) -> CGRect? {
+        var previous = before
+        var polls = 0
+        let giveUp = DispatchTime.now().uptimeNanoseconds + 250_000_000
+        while DispatchTime.now().uptimeNanoseconds < giveUp {
+            usleep(12_000)
+            polls += 1
+            let now = frame(of: window)
+            let stopped = same(now, previous)
+            previous = now
+            if stopped && (!same(now, before) || polls >= 5) { return now }
+        }
+        return previous
     }
 
     /// An app with a minimum size larger than the cell keeps its size — its right — but hung
     /// from the cell's top-left corner it then sticks out past the edge of the screen, which is
-    /// no use to anybody. Same size, same corner, slid back inside. The read happens after a
-    /// beat, because an app answers a write on its own run loop and not before.
-    static func keepOnScreen(_ window: AXUIElement, hungFrom target: CGRect, within visible: CGRect) {
-        usleep(120_000)
-        guard let now = frame(of: window) else { return }
+    /// no use to anybody. Same size, same corner, slid back inside.
+    static func keepOnScreen(_ window: AXUIElement, hungFrom target: CGRect,
+                             within visible: CGRect, wasAt before: CGRect?) {
+        guard let now = frameOnceStill(of: window, wasAt: before) else { return }
         guard now.minX < visible.minX - 1 || now.minY < visible.minY - 1
                 || now.maxX > visible.maxX + 1 || now.maxY > visible.maxY + 1 else { return }
         var rect = CGRect(x: target.minX, y: target.maxY - now.height,
