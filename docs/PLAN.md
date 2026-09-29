@@ -31,7 +31,7 @@ Swift + AppKit/SwiftUI, nessuna dipendenza, build con `swiftc Sources/*.swift` (
 
 ## Ledger
 
-**Next action:** `./install.sh` e riprovare «Sistema tutto» con la griglia 3×2; se una disposizione non torna, `Tessera --diagnose` prima di qualsiasi ipotesi e guardare drag-to-zone e "sistema tutto" su dati reali (Gianluca).
+**Next action:** Gianluca prova popover, hotkey e disposizioni salvate a mano (il motore è verificato dal vivo); poi decidere se limare la RAM (49 MB contro i 27 di Burny) e guardare drag-to-zone e "sistema tutto" su dati reali (Gianluca).
 
 | Data | Compito | Commit | Verdetto | Note |
 |---|---|---|---|---|
@@ -75,6 +75,34 @@ Bocciato: drag-to-zone («inguardabile, compare a ogni spostamento e mette 1×1�
   `Sources/Logo.swift` le ridisegna in AppKit (l'app non ha risorse esterne).
 - **`./scripts/render-ui.sh`**: rende popover e Impostazioni in PNG senza lanciare l'app, per
   guardare una modifica di UI prima di spedirla.
+
+### Round 3 — test dal vivo sull'hardware di Gianluca (2026-09-29)
+
+Installata, autorizzata, e provata davvero su MacBook + Acer X34. Cosa ha insegnato il test,
+che nessuna lettura del codice avrebbe trovato:
+
+1. **La configurazione veniva buttata**: aggiungere un campo a `Config` rendeva illeggibile ogni
+   file esistente (il decoder sintetizzato di Swift lancia sulla chiave mancante e i default della
+   struct non si applicano). Il 3×2 dell'Acer era sul disco e l'app leggeva 12×8. Ora decodifica
+   campo per campo, con test in entrambe le direzioni (file vecchio e file futuro).
+2. **L'autorizzazione Accessibilità non sopravviveva al rebuild**: firma ad-hoc diversa a ogni
+   build. Ora `build-app.sh` usa l'identità Apple Development se c'è (Team 853ZZ3CH23): verificato,
+   il permesso resta dopo una reinstallazione.
+3. **`--diagnose` da terminale è cieco**: gira in un processo senza permesso e vede zero finestre.
+   Ora i comandi passano per l'istanza in esecuzione via `DistributedNotificationCenter`.
+4. **Il pulsante zoom è veleno**: premerlo per de-massimizzare manda in fullscreen le app Electron
+   e Catalyst (ci sono finite Teams e WhatsApp durante il test). Rimosso; le finestre massimizzate
+   si sbloccano con uno "strattone" a dimensione piccola, e `--exit-fullscreen` ripara i danni.
+5. **La verifica del piazzamento era sbagliata**: confrontava l'origine in coordinate Cocoa, che
+   dipende dall'altezza scelta dall'app. Ora confronta l'angolo alto-sinistro in coordinate AX e
+   accetta l'altro angolo per le app a dimensione imposta.
+6. **Le app si riaggiustano dopo il ridimensionamento** (Terminale si aggancia ai caratteri,
+   Chromium si riposiziona): servono due passaggi di assestamento. Con questi, sull'Acer 3×2 le
+   quattro finestre arrivano tutte a destinazione.
+
+Esito finale sull'Acer, strategia «Una per cella»: 3 finestre esatte, 1 con l'altezza imposta da
+Terminale (700 invece di 693, una riga di caratteri). Limiti veri e documentati nel README:
+dimensioni minime delle app, griglia dei caratteri di Terminale, finestre in fullscreen saltate.
 
 **Deviazioni dal piano:** `masterStack` non era rappresentabile quando la pila supera le righe della
 griglia; invece di stringere le finestre sotto la cella, ripiega sulla disposizione bilanciata.

@@ -164,6 +164,7 @@ enum AutoArrange {
                       strategy: ArrangeStrategy) -> Int {
         let grid = Store.shared.config.grid(for: screen.tesseraKey)
         let aspect = screen.visibleFrame.width / screen.visibleFrame.height
+        lastOutcomes = []
         let chosen = AX.sortedFrontToBack(windows).prefix(grid.cols * grid.rows)
         // Left-to-right, top-to-bottom: keep the arrangement close to where things already were,
         // so windows travel the shortest distance to their tile.
@@ -172,12 +173,36 @@ enum AutoArrange {
             return fa.minX == fb.minX ? fa.maxY > fb.maxY : fa.minX < fb.minX
         }
         let cells = partition(count: ordered.count, grid: grid, screenAspect: aspect, strategy: strategy)
+        let pairs = Array(zip(ordered, cells))
+        for (window, cell) in pairs {
+            _ = AX.outcome(placing: window, in: cell, on: screen)
+        }
+        // Settle: several apps adjust themselves after a resize — Terminal snaps to whole
+        // character rows, Chromium restores its own position — so a single pass leaves windows
+        // a few dozen pixels from where they were sent. Re-place whatever drifted, twice.
+        for _ in 0..<2 {
+            usleep(250_000)
+            let drifted = pairs.filter { window, cell in
+                guard let frame = window.frame else { return false }
+                let target = Geometry.frame(for: cell, in: grid, on: screen.visibleFrame)
+                return abs(frame.minX - target.minX) > 4 || abs(frame.maxY - target.maxY) > 4
+            }
+            if drifted.isEmpty { break }
+            for (window, cell) in drifted { _ = AX.outcome(placing: window, in: cell, on: screen) }
+        }
+
+        lastOutcomes = []
         var moved = 0
-        for (window, cell) in zip(ordered, cells) where AX.place(window, in: cell, on: screen) {
-            moved += 1
+        for (window, cell) in pairs {
+            let outcome = AX.outcome(placing: window, in: cell, on: screen)
+            if outcome.succeeded { moved += 1 }
+            lastOutcomes.append((window.appName, outcome))
         }
         return moved
     }
+
+    /// What happened to each window in the last arrangement, for `--arrange` to report.
+    private(set) static var lastOutcomes: [(app: String, outcome: AX.PlacementOutcome)] = []
 
     /// How many windows "arrange all" would move on this screen, and how many it would leave alone.
     static func plan(on screen: NSScreen) -> (tiled: Int, untouched: Int) {

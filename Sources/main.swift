@@ -37,8 +37,20 @@ final class AppController {
     /// Arranges every window on the screen under the mouse.
     @discardableResult
     func arrangeCurrentScreen(_ strategy: ArrangeStrategy) -> Int {
-        let screen = NSScreen.underMouse
-        return AutoArrange.apply(AutoArrange.windows(on: screen), on: screen, strategy: strategy)
+        arrange(NSScreen.underMouse, with: strategy)
+    }
+
+    @discardableResult
+    func arrange(_ screen: NSScreen, with strategy: ArrangeStrategy) -> Int {
+        AutoArrange.apply(AutoArrange.windows(on: screen), on: screen, strategy: strategy)
+    }
+
+    /// Finds a screen by its key or by a piece of its name, for the command line.
+    static func screen(matching text: String?) -> NSScreen {
+        guard let text, !text.isEmpty else { return .underMouse }
+        return NSScreen.screen(forKey: text)
+            ?? NSScreen.screens.first { $0.localizedName.localizedCaseInsensitiveContains(text) }
+            ?? .underMouse
     }
 
     // MARK: Layouts
@@ -128,6 +140,51 @@ final class AppController {
         try? data.write(to: dir.appendingPathComponent("state.json"), options: .atomic)
     }
 
+    // MARK: Commands from the command line
+
+    static let exitFullScreenNotification = Notification.Name("sh.tessera.exitfullscreen")
+    static let diagnoseNotification = Notification.Name("sh.tessera.diagnose")
+    static let arrangeNotification = Notification.Name("sh.tessera.arrange")
+
+    static var supportDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Tessera", isDirectory: true)
+    }
+
+    private func listenForCommands() {
+        let center = DistributedNotificationCenter.default()
+        center.addObserver(forName: Self.diagnoseNotification, object: nil, queue: .main) { _ in
+            try? diagnosticsText().write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
+                                        atomically: true, encoding: .utf8)
+        }
+        center.addObserver(forName: Self.exitFullScreenNotification, object: nil, queue: .main) { _ in
+            let windows = AX.fullScreenWindows()
+            let restored = windows.filter(AX.exitFullScreen).map(\.appName)
+            let report = windows.isEmpty
+                ? "Nessuna finestra a tutto schermo.\n"
+                : "Riportate fuori dal fullscreen: \(restored.joined(separator: ", "))\n"
+            try? report.write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
+                              atomically: true, encoding: .utf8)
+        }
+        center.addObserver(forName: Self.arrangeNotification, object: nil, queue: .main) { [weak self] note in
+            // The command line packs "strategy;screen" into the one string a distributed
+            // notification can carry.
+            let parts = (note.object as? String)?.components(separatedBy: ";") ?? []
+            let strategy = parts.first.flatMap(ArrangeStrategy.init(rawValue:))
+                ?? self?.store.config.defaultStrategy ?? .balanced
+            let screen = AppController.screen(matching: parts.count > 1 ? parts[1] : nil)
+            let moved = self?.arrange(screen, with: strategy) ?? 0
+            let detail = AutoArrange.lastOutcomes
+                .map { "  \($0.app): \($0.outcome.describedInItalian)" }
+                .joined(separator: "\n")
+            let report = "Schermo \(screen.localizedName): sistemate \(moved) finestre "
+                + "con la strategia «\(strategy.label)».\n" + detail + "\n"
+                + diagnosticsText()
+            try? report.write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
+                              atomically: true, encoding: .utf8)
+        }
+    }
+
     // MARK: Lifecycle
 
     func start() {
@@ -143,6 +200,7 @@ final class AppController {
             self.rearrangeScreensWhoseGridChanged()
         }
         writeState()
+        listenForCommands()
         if !AX.isTrusted {
             promptForAccessibility()
             watchForTrust()
@@ -176,10 +234,15 @@ func writeIcon(to path: String, size: Int) {
 
 // MARK: - Diagnostics (Tessera.app/Contents/MacOS/Tessera --diagnose)
 
-/// Prints what Tessera sees and what "arrange all" would do, without moving a single window.
-/// Run it from the installed app so it inherits the Accessibility permission of that bundle.
-func printDiagnostics() {
+/// What Tessera sees and what "arrange all" would do, without moving a single window.
+///
+/// Only the running app can answer this: Accessibility is granted to the app, and a second copy
+/// of the binary started from a terminal is a different process that sees no windows at all.
+/// So the command-line `--diagnose` asks the running app and prints its reply.
+func diagnosticsText() -> String {
     let config = Store.shared.config
+    var out = ""
+    func print(_ line: String) { out += line + "\n" }
     print("Tessera \(appVersion) — diagnostica (nessuna finestra viene spostata)")
     print("Accesso Accessibilità: \(AX.isTrusted ? "attivo" : "NON attivo — autorizza l'app e riprova")")
     print("Strategia predefinita: \(config.defaultStrategy.label)\n")
@@ -210,6 +273,7 @@ func printDiagnostics() {
         }
         print("")
     }
+    return out
 }
 
 private func short(_ rect: CGRect) -> String {
@@ -230,8 +294,44 @@ if let index = arguments.firstIndex(of: "--icon"), arguments.count > index + 2 {
     exit(0)
 }
 
+/// Asks the running app to run a command and prints the reply it writes out.
+func askRunningApp(_ name: Notification.Name, strategy: String?) -> Bool {
+    let reply = AppController.supportDirectory.appendingPathComponent("diagnose.txt")
+    try? FileManager.default.removeItem(at: reply)
+    guard !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty else {
+        print("Tessera non è in esecuzione: aprila e riprova.")
+        return false
+    }
+    DistributedNotificationCenter.default().postNotificationName(name, object: strategy,
+                                                                 userInfo: nil, deliverImmediately: true)
+    for _ in 0..<40 {
+        if let text = try? String(contentsOf: reply, encoding: .utf8) {
+            print(text)
+            return true
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    print("Tessera non ha risposto entro 4 secondi.")
+    return false
+}
+
 if arguments.contains("--diagnose") {
-    printDiagnostics()
+    // With the permission in hand (rare from a terminal) answer directly; otherwise ask the app.
+    if AX.isTrusted { print(diagnosticsText()) } else { _ = askRunningApp(AppController.diagnoseNotification, strategy: nil) }
+    exit(0)
+}
+
+if arguments.contains("--exit-fullscreen") {
+    _ = askRunningApp(AppController.exitFullScreenNotification, strategy: nil)
+    exit(0)
+}
+
+if let index = arguments.firstIndex(of: "--arrange") {
+    let strategy = arguments.count > index + 1 && !arguments[index + 1].hasPrefix("--")
+        ? arguments[index + 1] : ""
+    let screenIndex = arguments.firstIndex(of: "--screen")
+    let screen = screenIndex.flatMap { arguments.count > $0 + 1 ? arguments[$0 + 1] : nil } ?? ""
+    _ = askRunningApp(AppController.arrangeNotification, strategy: "\(strategy);\(screen)")
     exit(0)
 }
 

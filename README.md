@@ -31,11 +31,27 @@ spostare le finestre delle altre app. Per disinstallare: `./uninstall.sh`.
 ./scripts/test.sh              # controlli numerici sulla geometria della griglia
 ./scripts/build-app.sh         # build/Tessera.app
 ./scripts/render-ui.sh         # popover e Impostazioni in PNG, senza lanciare l'app
-~/Applications/Tessera.app/Contents/MacOS/Tessera --diagnose   # cosa vede e cosa farebbe, a secco
+
+# Comandi dell'app installata (parlano con l'istanza in esecuzione, che ha il permesso):
+T=~/Applications/Tessera.app/Contents/MacOS/Tessera
+$T --diagnose                       # cosa vede e cosa farebbe, senza muovere nulla
+$T --arrange cells --screen Acer    # dispone davvero, su uno schermo scelto, e riporta esito per finestra
+$T --exit-fullscreen                # riporta le finestre fuori dal fullscreen (lì non sono disponibili)
 ```
 
 `--diagnose` non sposta niente: stampa schermi, griglie, finestre viste e la cella in cui finirebbe
 ognuna. È il primo comando da lanciare quando una disposizione non è quella che ti aspettavi.
+`--arrange` riporta l'esito finestra per finestra, compreso il motivo di un rifiuto (codice AX,
+attributi settabili, stato fullscreen).
+
+### Cosa non si può ottenere da un'app
+
+Alcune finestre non obbediscono, e non è un difetto di Tessera: le app a **dimensione minima**
+(Chrome sotto i 500 pt, Attività di Sistema, Teams) restano più grandi della cella; **Terminale**
+si aggancia alla griglia dei caratteri, quindi sbaglia di qualche pixel; le finestre in
+**fullscreen** hanno una Scrivania tutta loro e vengono saltate — usa `--exit-fullscreen` o il
+pulsante verde per riportarle indietro. Tessera fa due passaggi di assestamento, perché diverse
+app (Terminale, Chromium) si riaggiustano dopo il ridimensionamento.
 
 Requisiti: macOS 13+, strumenti da riga di comando di Xcode. Nessuna dipendenza esterna.
 La configurazione sta in `~/Library/Application Support/Tessera/config.json`.
