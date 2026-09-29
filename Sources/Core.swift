@@ -6,7 +6,7 @@
 
 import AppKit
 
-let appVersion = "0.1.0"   // scripts/build-app.sh reads this for Info.plist
+let appVersion = "1.0.0"   // scripts/build-app.sh reads this for Info.plist
 let bundleID = "com.tessera.menubar"
 
 // MARK: - Grid
@@ -128,7 +128,7 @@ struct Placement: Codable, Equatable {
     var screenKey: String?       // nil = the screen the app is already on
 }
 
-/// A scene: "Dev", "Call", "Ricerca" — applied in one go.
+/// A scene: "Dev", "Call", "Research" — applied in one go.
 struct Layout: Codable, Equatable, Identifiable {
     var id = UUID()
     var name: String
@@ -148,6 +148,7 @@ struct Config: Codable {
     var autoGrid: [String: Bool] = [:]
     var defaultStrategy: ArrangeStrategy = .balanced
     var masterFraction: CGFloat = 0.6        // width of the master tile in "master + stack"
+    var language = "system"                  // system | en | it
 
     func grid(for screenKey: String) -> GridSpec {
         (grids[screenKey] ?? .default).clamped()
@@ -176,6 +177,7 @@ struct Config: Codable {
         autoGrid = value(.autoGrid, [:])
         defaultStrategy = value(.defaultStrategy, .balanced)
         masterFraction = value(.masterFraction, 0.6)
+        language = value(.language, "system")
     }
 }
 
@@ -197,17 +199,21 @@ final class Store {
     }
 
     private func load() {
+        // Whatever happens to the file, the language has to end up resolved: a defaulted config
+        // still means "system", and the UI is built right after this returns.
+        defer { lang = resolveLanguage(config.language) }
         guard let data = try? Data(contentsOf: url) else { return }
         do {
             config = try JSONDecoder().decode(Config.self, from: data)
         } catch {
-            NSLog("Tessera: configurazione illeggibile (%@), riparto dai valori predefiniti: %@",
+            NSLog("Tessera: unreadable configuration (%@), starting from the defaults: %@",
                   url.path, String(describing: error))
         }
     }
 
     func mutate(_ body: (inout Config) -> Void) {
         body(&config)
+        lang = resolveLanguage(config.language)
         save()
         onChange?()
     }

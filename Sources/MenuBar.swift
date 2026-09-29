@@ -24,6 +24,7 @@ final class PopoverModel: ObservableObject {
     @Published fileprivate(set) var trusted = false
     @Published fileprivate(set) var appName: String?
     @Published fileprivate(set) var screenName = ""
+    @Published fileprivate(set) var screenKey = ""
     @Published fileprivate(set) var grid = GridSpec.default
     @Published fileprivate(set) var autoGrid = false
     @Published fileprivate(set) var screenAspect: CGFloat = 1.6
@@ -49,6 +50,7 @@ final class PopoverModel: ObservableObject {
         trusted = AX.isTrusted
         appName = window?.appName
         screenName = screen.localizedName
+        screenKey = screen.tesseraKey
         autoGrid = config.isAutoGrid(screen.tesseraKey)
         // Read, never recompute: an automatic grid is settled when you arrange, not when you
         // look. Otherwise opening this popover redraws the map against a grid nobody applied.
@@ -71,19 +73,20 @@ extension PopoverModel {
         trusted = true
         appName = "Safari"
         screenName = "Acer X34 P"
+        screenKey = "display-demo"
         grid = GridSpec(cols: 3, rows: 2)
         autoGrid = true
         screenAspect = 21.0 / 9.0
         occupants = [
             AutoArrange.Occupant(appName: "Safari", cell: CellRect(col: 0, row: 0), isFocused: true, resistant: false),
             AutoArrange.Occupant(appName: "Xcode", cell: CellRect(col: 1, row: 0, w: 1, h: 2), isFocused: false, resistant: false),
-            AutoArrange.Occupant(appName: "Note", cell: CellRect(col: 0, row: 1), isFocused: false, resistant: false),
-            AutoArrange.Occupant(appName: "Anteprima", cell: CellRect(col: 2, row: 0, w: 1, h: 2), isFocused: false, resistant: true),
+            AutoArrange.Occupant(appName: "Notes", cell: CellRect(col: 0, row: 1), isFocused: false, resistant: false),
+            AutoArrange.Occupant(appName: "Preview", cell: CellRect(col: 2, row: 0, w: 1, h: 2), isFocused: false, resistant: true),
         ]
         tiled = 4
         untouched = 1
-        zones = [Zone(name: "Sinistra", cell: CellRect(col: 0, row: 0, w: 1, h: 2), keyCode: 123, modifiers: 6400)]
-        layouts = [Layout(name: "Sviluppo", placements: [])]
+        zones = [Zone(name: "Left", cell: CellRect(col: 0, row: 0, w: 1, h: 2), keyCode: 123, modifiers: 6400)]
+        layouts = [Layout(name: "Dev", placements: [])]
     }
 }
 
@@ -191,6 +194,68 @@ struct GridPicker: View {
     }
 }
 
+// MARK: - Quick grid
+
+/// The grid presets worth having on a screen of this shape, plus the automatic one.
+/// Picking one writes it for the screen under the mouse; with "re-arrange when the grid changes"
+/// on (the default) the windows follow at once, with the popover still open.
+struct GridChips: View {
+    let grid: GridSpec
+    let auto: Bool
+    let aspect: CGFloat
+    var enabled = true
+    let onPick: (GridSpec?) -> Void
+
+    /// A wide screen wants columns, a tall one wants rows: offering 1×2 on an ultrawide would
+    /// be a preset nobody can use.
+    private var presets: [(cols: Int, rows: Int)] {
+        let shape: [(Int, Int)]
+        if aspect >= 2.1 {
+            shape = [(2, 1), (3, 1), (4, 1), (3, 2)]
+        } else if aspect >= 1.2 {
+            shape = [(2, 1), (2, 2), (3, 2), (4, 2)]
+        } else {
+            shape = [(1, 2), (2, 2), (2, 3)]
+        }
+        // A grid set by hand from the steppers stays visible and selected among the presets.
+        if !auto && !shape.contains(where: { $0.0 == grid.cols && $0.1 == grid.rows }) {
+            return shape + [(grid.cols, grid.rows)]
+        }
+        return shape
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            chip(label: "Auto", selected: auto) { onPick(nil) }
+            ForEach(presets.indices, id: \.self) { index in
+                let preset = presets[index]
+                chip(label: "\(preset.cols)×\(preset.rows)",
+                     selected: !auto && grid.cols == preset.cols && grid.rows == preset.rows) {
+                    onPick(GridSpec(cols: preset.cols, rows: preset.rows,
+                                    outerGap: grid.outerGap, innerGap: grid.innerGap))
+                }
+            }
+        }
+        .opacity(enabled ? 1 : 0.4)
+    }
+
+    private func chip(label: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(selected ? Color.white : Color.primary.opacity(0.75))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 3.5)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(selected ? Color.accentColor : Color.primary.opacity(0.07)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+}
+
 // MARK: - Rows
 
 /// One tappable line: a label, an optional value or shortcut on the right, a note underneath.
@@ -279,8 +344,8 @@ struct TesseraPopover: View {
     private var title: String {
         switch model.page {
         case .home: return "Tessera"
-        case .settings: return "Impostazioni"
-        case .zones: return "Zone"
+        case .settings: return tr("Settings")
+        case .zones: return tr("Zones")
         }
     }
 
@@ -297,7 +362,7 @@ struct TesseraPopover: View {
             if model.page == .home {
                 Button { model.page = .settings } label: { Image(systemName: "gearshape") }
                     .buttonStyle(.borderless)
-                    .help("Impostazioni")
+                    .help(tr("Settings"))
             }
         }
     }
@@ -307,7 +372,7 @@ struct TesseraPopover: View {
             Image(systemName: "square.grid.2x2").font(.system(size: 9))
             Text("Tessera \(appVersion)").font(.system(size: 10.5))
             Spacer()
-            Button("Esci") { NSApp.terminate(nil) }.buttonStyle(.borderless).font(.system(size: 11))
+            Button(tr("Quit")) { NSApp.terminate(nil) }.buttonStyle(.borderless).font(.system(size: 11))
         }
         .foregroundStyle(.tertiary)
     }
@@ -327,10 +392,10 @@ struct TesseraPopover: View {
     private var warning: some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-            Text("Manca l'accesso Accessibilità.")
+            Text(tr("Accessibility access is missing."))
                 .font(.system(size: 11.5, weight: .medium)).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
-            Button("Apri") { MenuBarController.shared.openAccessibility() }.controlSize(.small)
+            Button(tr("Open")) { MenuBarController.shared.openAccessibility() }.controlSize(.small)
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.orange.opacity(0.12)))
@@ -339,7 +404,7 @@ struct TesseraPopover: View {
     private var gridCard: some View {
         TesseraCard {
             HStack(spacing: 5) {
-                Text(model.screenName.isEmpty ? "Schermo" : model.screenName)
+                Text(model.screenName.isEmpty ? tr("Screen") : model.screenName)
                     .font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Text("·").foregroundStyle(.tertiary)
                 Text("\(model.grid.cols)×\(model.grid.rows)")
@@ -360,6 +425,10 @@ struct TesseraPopover: View {
                 Text(line).font(.system(size: 10.5)).foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            GridChips(grid: model.grid, auto: model.autoGrid, aspect: model.screenAspect,
+                      enabled: model.trusted) { spec in
+                MenuBarController.shared.setGrid(spec)
+            }
             GridPicker(grid: model.grid, screenAspect: model.screenAspect,
                        occupants: model.occupants, enabled: model.canPlace) { cell in
                 MenuBarController.shared.place(in: cell)
@@ -377,66 +446,76 @@ struct TesseraPopover: View {
     private var statusNote: String? {
         guard model.resistant > 0 else { return nil }
         return model.resistant == 1
-            ? "1 tratteggiata non si piazza esatta"
-            : "\(model.resistant) tratteggiate non si piazzano esatte"
+            ? tr("1 dashed window won't fit exactly")
+            : String(format: tr("%d dashed windows won't fit exactly"), model.resistant)
     }
 
     private var mapNote: String {
-        if !model.trusted { return "Serve l'accesso Accessibilità per vedere le finestre." }
+        if !model.trusted { return tr("Accessibility access is needed to see the windows.") }
         return model.canPlace
-            ? "Clic o trascina per piazzare \(model.appName ?? "")."
-            : "Porta davanti una finestra per poterla piazzare."
+            ? String(format: tr("Click or drag to place %@."), model.appName ?? "")
+            : tr("Bring a window to the front to place it.")
     }
 
     private var arrangeCard: some View {
         TesseraCard {
             HStack(spacing: 6) {
                 Button { MenuBarController.shared.arrange(with: model.strategy) } label: {
-                    Text("Sistema tutto").font(.system(size: 12, weight: .medium))
+                    Text(tr("Arrange all")).font(.system(size: 12, weight: .medium))
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(!model.trusted)
-                Menu {
-                    ForEach(ArrangeStrategy.allCases, id: \.self) { strategy in
-                        Button(strategy.label) { MenuBarController.shared.arrange(with: strategy) }
-                    }
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                }
-                .menuStyle(.button)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Sistema tutto con un'altra strategia")
-                .disabled(!model.trusted)
             }
+            strategyMenu
             Text(arrangeNote)
                 .font(.system(size: 10.5)).foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             Divider()
-            PopoverRow(title: "Sistema la finestra attiva", enabled: model.canPlace) {
+            PopoverRow(title: tr("Fit the active window"), enabled: model.canPlace) {
                 MenuBarController.shared.fitFocused()
             }
-            PopoverRow(title: "Adatta la griglia alle finestre", enabled: model.trusted) {
+            PopoverRow(title: tr("Fit grid to windows"), enabled: model.trusted) {
                 MenuBarController.shared.fitGridToWindows()
             }
         }
     }
 
+    /// The composition, named and one click away: picking one makes it the default and
+    /// arranges with it, so the choice is seen instead of living in the settings.
+    private var strategyMenu: some View {
+        HStack(spacing: 6) {
+            Text(tr("Arrangement")).font(.system(size: 11)).foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            Picker("", selection: Binding(get: { model.strategy },
+                                          set: { MenuBarController.shared.setStrategy($0) })) {
+                ForEach(ArrangeStrategy.allCases, id: \.self) { strategy in
+                    Text(strategy.label).tag(strategy)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .fixedSize()
+            .disabled(!model.trusted)
+        }
+    }
+
     private var arrangeNote: String {
-        let head = "\(model.strategy.label) · \(windowCount(model.tiled))"
+        let head = model.tiled == 1
+            ? tr("1 window in the grid")
+            : String(format: tr("%d windows in the grid"), model.tiled)
         guard model.untouched > 0 else { return head }
-        return head + (model.untouched == 1
-                       ? " · 1 resta dov'è"
-                       : " · \(model.untouched) restano dove sono")
+        let tail = model.untouched == 1
+            ? tr("1 stays where it is")
+            : String(format: tr("%d stay where they are"), model.untouched)
+        return head + " · " + tail
     }
 
     private var zonesCard: some View {
         TesseraCard {
-            CardHeader(title: "Zone")
+            CardHeader(title: tr("Zones"))
             ForEach(model.zones) { zone in
                 PopoverRow(title: zone.name,
                            trailing: hotkeyDescription(keyCode: zone.keyCode, modifiers: zone.modifiers),
@@ -449,9 +528,9 @@ struct TesseraPopover: View {
 
     private var layoutsCard: some View {
         TesseraCard {
-            CardHeader(title: "Disposizioni")
+            CardHeader(title: tr("Layouts"))
             if model.layouts.isEmpty {
-                Text("Nessuna disposizione salvata.")
+                Text(tr("No saved layouts."))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -462,14 +541,14 @@ struct TesseraPopover: View {
                     MenuBarController.shared.apply(layout)
                 }
             }
-            Button("Salva disposizione attuale…") { MenuBarController.shared.saveLayout() }
+            Button(tr("Save current layout…")) { MenuBarController.shared.saveLayout() }
                 .controlSize(.small)
                 .disabled(!model.trusted)
         }
     }
 
     private func windowCount(_ n: Int) -> String {
-        n == 1 ? "1 finestra" : "\(n) finestre"
+        n == 1 ? tr("1 window") : String(format: tr("%d windows"), n)
     }
 }
 
@@ -573,6 +652,33 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         AppController.shared.fitGridAndArrange(on: NSScreen.underMouse)
     }
 
+    /// Quick grid change from the home page. `nil` means automatic: the grid is then taken
+    /// from how many windows are open, which only makes sense together with the arranging,
+    /// so that one tiles at once. A fixed grid is only written — `rearrangeOnGridChange`
+    /// decides whether the windows follow, exactly as it does from the settings page.
+    /// The popover stays open either way: this is a knob you turn while looking at the map.
+    func setGrid(_ spec: GridSpec?) {
+        let key = model.screenKey
+        guard let screen = NSScreen.screen(forKey: key) else { return }
+        if let spec {
+            Store.shared.mutate { config in
+                config.autoGrid[key] = false
+                config.grids[key] = spec.clamped()
+            }
+        } else {
+            Store.shared.mutate { $0.autoGrid[key] = true }
+            AppController.shared.fitGridAndArrange(on: screen)
+        }
+        model.reload(window: capturedWindow)
+        prefs.reload()
+    }
+
+    /// Picking a composition makes it the default and applies it right away.
+    func setStrategy(_ strategy: ArrangeStrategy) {
+        Store.shared.mutate { $0.defaultStrategy = strategy }
+        arrange(with: strategy)
+    }
+
     func arrange(with strategy: ArrangeStrategy) {
         closePopover()
         AppController.shared.arrangeCurrentScreen(strategy)
@@ -588,13 +694,13 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         let layout = AppController.shared.captureLayout(named: "")
         closePopover()
         let alert = NSAlert()
-        alert.messageText = "Salva la disposizione attuale"
-        alert.informativeText = "Dai un nome alla disposizione delle finestre di adesso."
-        alert.addButton(withTitle: "Salva")
-        alert.addButton(withTitle: "Annulla")
+        alert.messageText = tr("Save the current layout")
+        alert.informativeText = tr("Name the windows as they sit right now.")
+        alert.addButton(withTitle: tr("Save"))
+        alert.addButton(withTitle: tr("Cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
-        field.placeholderString = "Nome"
-        field.stringValue = "Disposizione \(Store.shared.config.layouts.count + 1)"
+        field.placeholderString = tr("Name")
+        field.stringValue = String(format: tr("Layout %d"), Store.shared.config.layouts.count + 1)
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
 

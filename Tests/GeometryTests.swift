@@ -127,25 +127,25 @@ let laptop = CGRect(x: 0, y: 0, width: 1512, height: 892)
 for (frame, name) in [(ultrawide, "ultrawide"), (laptop, "laptop")] {
     for n in 1...12 {
         let grid = AutoArrange.bestGrid(for: n, fitting: frame, like: .default)
-        check(grid.cols * grid.rows >= n, "\(name) n=\(n): \(grid.cols)×\(grid.rows) non ci sta")
+        check(grid.cols * grid.rows >= n, "\(name) n=\(n): \(grid.cols)×\(grid.rows) does not fit")
         check(grid.cols * grid.rows - n <= max(1, n / 3),
-              "\(name) n=\(n): \(grid.cols)×\(grid.rows) spreca troppe celle")
+              "\(name) n=\(n): \(grid.cols)×\(grid.rows) wastes too many cells")
         // Every window has to be visible: the partition must give n distinct tiles.
         let cells = AutoArrange.partition(count: n, grid: grid,
                                           screenAspect: frame.width / frame.height, strategy: .cells)
-        check(Set(cells).count == n, "\(name) n=\(n): celle duplicate")
+        check(Set(cells).count == n, "\(name) n=\(n): duplicate cells")
     }
 }
 check(AutoArrange.bestGrid(for: 4, fitting: ultrawide, like: .default) == GridSpec(cols: 2, rows: 2),
-      "ultrawide con 4 finestre: \(AutoArrange.bestGrid(for: 4, fitting: ultrawide, like: .default))")
+      "ultrawide with 4 windows: \(AutoArrange.bestGrid(for: 4, fitting: ultrawide, like: .default))")
 check(AutoArrange.bestGrid(for: 6, fitting: ultrawide, like: .default) == GridSpec(cols: 3, rows: 2),
-      "ultrawide con 6 finestre: \(AutoArrange.bestGrid(for: 6, fitting: ultrawide, like: .default))")
+      "ultrawide with 6 windows: \(AutoArrange.bestGrid(for: 6, fitting: ultrawide, like: .default))")
 check(AutoArrange.bestGrid(for: 2, fitting: laptop, like: .default) == GridSpec(cols: 2, rows: 1),
-      "laptop con 2 finestre: \(AutoArrange.bestGrid(for: 2, fitting: laptop, like: .default))")
+      "laptop with 2 windows: \(AutoArrange.bestGrid(for: 2, fitting: laptop, like: .default))")
 // The gaps the user chose are kept; only the cell count is decided for them.
 let spaced = GridSpec(cols: 12, rows: 8, outerGap: 20, innerGap: 4)
 let derived = AutoArrange.bestGrid(for: 5, fitting: ultrawide, like: spaced)
-check(derived.outerGap == 20 && derived.innerGap == 4, "i gap scelti a mano vanno conservati")
+check(derived.outerGap == 20 && derived.innerGap == 4, "hand-picked gaps must be kept")
 
 print(failures == 0 ? "ALL GEOMETRY CHECKS PASSED" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

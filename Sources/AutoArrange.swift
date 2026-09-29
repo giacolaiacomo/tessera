@@ -16,21 +16,21 @@ enum ArrangeStrategy: String, Codable, CaseIterable {
 
     var label: String {
         switch self {
-        case .balanced:    return "Bilanciata"
-        case .cells:       return "Una per cella"
-        case .columns:     return "Colonne"
-        case .rows:        return "Righe"
-        case .masterStack: return "Master + pila"
+        case .balanced:    return tr("Balanced")
+        case .cells:       return tr("One per cell")
+        case .columns:     return tr("Columns")
+        case .rows:        return tr("Rows")
+        case .masterStack: return tr("Master + stack")
         }
     }
 
     var detail: String {
         switch self {
-        case .balanced:    return "Riempie lo schermo dividendolo in riquadri il più quadrati possibile."
-        case .cells:       return "Una finestra per cella della griglia, nell'ordine di lettura: con 3×2 ogni finestra è un sesto di schermo, anche se le finestre sono meno di sei."
-        case .columns:     return "Una colonna a testa, alte quanto lo schermo."
-        case .rows:        return "Una riga a testa, larghe quanto lo schermo."
-        case .masterStack: return "La finestra in primo piano grande a sinistra, le altre in pila a destra."
+        case .balanced:    return tr("Fills the screen, splitting it into tiles as square as it can.")
+        case .cells:       return tr("One window per grid cell, in reading order: on a 3×2 every window is a sixth of the screen, even when there are fewer than six.")
+        case .columns:     return tr("One column each, as tall as the screen.")
+        case .rows:        return tr("One row each, as wide as the screen.")
+        case .masterStack: return tr("The front window large on the left, the rest stacked on the right.")
         }
     }
 }
@@ -194,7 +194,7 @@ enum AutoArrange {
                 && abs(current.height - visible.height) < 4
             let result = AX.writeFrame(window.element, to: target, shrinkFirst: fillsScreen)
             errors.append("pos \(result.position.rawValue)/size \(result.size.rawValue)"
-                          + " chiesto \(Int(target.width))×\(Int(target.height))")
+                          + " asked \(Int(target.width))×\(Int(target.height))")
             usleep(80_000)
         }
 

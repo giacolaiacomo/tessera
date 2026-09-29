@@ -50,7 +50,7 @@ final class HotkeyManager {
         let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID,
                                          GetApplicationEventTarget(), 0, &ref)
         guard status == noErr, let ref else {
-            NSLog("Tessera: hotkey %@ per «%@» non registrata (status %d)",
+            NSLog("Tessera: hotkey %@ for \"%@\" not registered (status %d)",
                   hotkeyDescription(keyCode: keyCode, modifiers: modifiers), label, Int(status))
             return
         }
@@ -103,7 +103,7 @@ private enum HotkeyKeyNames {
         18: "1", 19: "2", 20: "3", 21: "4", 22: "6", 23: "5", 25: "9", 26: "7", 28: "8", 29: "0",
         24: "=", 27: "-", 30: "]", 33: "[", 39: "'", 41: ";", 42: "\\", 43: ",", 44: "/", 47: ".",
         50: "`",
-        36: "↩", 48: "⇥", 49: "Spazio", 51: "⌫", 53: "⎋", 76: "⌤", 117: "⌦",
+        36: "↩", 48: "⇥", 49: "Space", 51: "⌫", 53: "⎋", 76: "⌤", 117: "⌦",
         115: "↖", 116: "⇞", 119: "↘", 121: "⇟", 114: "?⃝",
         123: "←", 124: "→", 125: "↓", 126: "↑",
         122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7", 100: "F8",
@@ -111,7 +111,9 @@ private enum HotkeyKeyNames {
     ]
 
     static func name(for keyCode: UInt32) -> String {
-        table[keyCode] ?? "#\(keyCode)"
+        // Only the spelled-out names ("Space") have a translation; the symbols and letters are
+        // the same in every language and come back from `tr` untouched.
+        table[keyCode].map(tr) ?? "#\(keyCode)"
     }
 }
 
@@ -206,9 +208,9 @@ final class HotkeyRecorderView: NSView {
 
         let text: String
         if armed {
-            text = "Premi una combinazione…"
+            text = tr("Press a combination…")
         } else {
-            text = title.isEmpty ? "Nessuna scorciatoia" : title
+            text = title.isEmpty ? tr("No shortcut") : title
         }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12, weight: title.isEmpty ? .regular : .medium),

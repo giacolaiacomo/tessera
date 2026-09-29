@@ -31,7 +31,7 @@ Swift + AppKit/SwiftUI, nessuna dipendenza, build con `swiftc Sources/*.swift` (
 
 ## Ledger
 
-**Next action:** Gianluca prova popover, hotkey e disposizioni salvate a mano (il motore è verificato dal vivo sull'Acer: tutte le finestre atterrano al primo colpo).
+**Next action:** pubblicare: repo pubblico giacolaiacomo/tessera, tag v1.0.0, release e formula nel tap. Poi Gianluca prova a mano popover, hotkey e disposizioni salvate.
 
 | Data | Compito | Commit | Verdetto | Note |
 |---|---|---|---|---|
@@ -164,3 +164,32 @@ Aveva ragione due volte.
 | Data | Compito | Commit | Verdetto | Note |
 |---|---|---|---|---|
 | 2026-09-29 | Semplificazione motore + griglia fissa/automatica per schermo | — | fatto | prova sull'Acer (3 Terminal, 3×1) e sull'interno (Chrome + WhatsApp, 3×2): tutte «ok» al primo colpo tranne la larghezza minima di WhatsApp; seconda passata identica alla prima (nessuno si muove più) |
+
+
+### Round 4 — scelta rapida, inglese, repo pubblico
+
+- **Scelta rapida nel popover**: una riga di pastiglie per la griglia (Auto + i preset adatti alla
+  forma dello schermo: su un ultrawide 2×1/3×1/4×1/3×2, su uno schermo alto 1×2/2×2/2×3) e la
+  composizione scelta per nome in un selettore nativo invece che dietro un'icona. Scegliere una
+  composizione la rende predefinita e la applica; "Auto" ricalcola la griglia dalle finestre aperte
+  e dispone subito. Il popover resta aperto: è una manopola che si gira guardando la mappa.
+- **Inglese di serie, italiano commutabile**, stesso schema di Burny: le stringhe in sorgente sono
+  inglesi, una tabella `italian` in `Sources/Localization.swift`, e `language` in `Config`
+  (system | en | it) con la voce Lingua nelle impostazioni. 107 voci in tabella, verificate una a
+  una sui segnaposto di formato. Lezione già nota rispettata: il campo nuovo è stato aggiunto anche
+  al decoder lenient, o avrebbe azzerato la configurazione.
+- **Repo da pubblicare**: LICENSE MIT, CHANGELOG, SECURITY, `.gitignore`, workflow CI che non lancia
+  mai l'app (un runner non può concedere l'Accessibilità: solo typecheck, test di geometria, bundle
+  e `--icon`), README in stile Burny e `packaging/tessera.rb` per il tap.
+- **Immagini del README** rigenerabili con `./scripts/docs-images.sh`: hero, screens, demo.gif,
+  social preview e icona, tutte dalla UI vera. Le celle mostrate nella GIF escono da
+  `AutoArrange.partition` e la griglia automatica da `bestGrid`, non sono disegnate a mano.
+- Difetto trovato in review e corretto: i report da riga di comando dicevano "1 windows arranged";
+  ora singolare e plurale hanno stringhe separate in entrambe le lingue.
+
+| Data | Compito | Commit | Verdetto | Note |
+|---|---|---|---|---|
+| 2026-09-29 | Scelta rapida griglia/composizione | — | fatto | reso fuori schermo e guardato prima della consegna |
+| 2026-09-29 | Inglese + tabella italiana (lotto delegato) | — | fatto | typecheck pulito, test verdi, nessun residuo fuori tabella; prova dal vivo in entrambe le lingue |
+| 2026-09-29 | Impalcatura repo (lotto delegato) | — | fatto | `--diagnose` del README rigenerato da me con l'output vero, versione portata a 1.0.0 |
+| 2026-09-29 | Immagini README (lotto delegato) | — | fatto | guardate una per una, GIF inclusa |

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Build Tessera.app at the given path (default: ./build/Tessera.app).
+# Build Tessera.app at the given path (default: ./build/Tessera.app). Used by install.sh and the Homebrew formula.
 set -e
 cd "$(dirname "$0")/.."
 command -v swiftc >/dev/null || { echo "swiftc not found — run: xcode-select --install"; exit 1; }
@@ -42,10 +42,10 @@ IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
   | grep -m1 "Apple Development" | sed -E 's/.*\) ([0-9A-F]+) ".*/\1/')
 if [ -n "$IDENTITY" ]; then
   codesign --force --sign "$IDENTITY" "$APP" >/dev/null 2>&1 \
-    && echo "  firmata con l'identità Apple Development $IDENTITY" \
-    || { codesign --force --sign - "$APP" 2>/dev/null; echo "  firma stabile fallita, ad-hoc"; }
+    && echo "  signed with the Apple Development identity $IDENTITY" \
+    || { codesign --force --sign - "$APP" 2>/dev/null; echo "  stable signature failed, falling back to ad-hoc"; }
 else
   codesign --force --sign - "$APP" 2>/dev/null || true   # ad-hoc: local use only
-  echo "  firmata ad-hoc: l'autorizzazione Accessibilità andrà ridata dopo ogni build"
+  echo "  signed ad-hoc: Accessibility access will have to be granted again after every build"
 fi
 echo "✓ $APP ($VERSION)"

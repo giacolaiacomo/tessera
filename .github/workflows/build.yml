@@ -1,0 +1,27 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+# Nothing here launches Tessera: the app needs Accessibility access, which a runner cannot grant.
+# Everything below either compiles, runs the pure-geometry tests, or draws the icon offscreen.
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Type-check
+        run: swiftc -typecheck Sources/*.swift
+      - name: Geometry tests (no UI, no Accessibility access)
+        run: ./scripts/test.sh
+      - name: App bundle (the same script Homebrew and install.sh use)
+        run: |
+          ./scripts/build-app.sh build/Tessera.app
+          test -x build/Tessera.app/Contents/MacOS/Tessera
+          test -s build/Tessera.app/Contents/Resources/AppIcon.icns
+      - name: Smoke test (draw the app icon)
+        run: |
+          build/Tessera.app/Contents/MacOS/Tessera --icon icon.png 256
+          test -s icon.png

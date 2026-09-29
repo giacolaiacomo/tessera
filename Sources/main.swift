@@ -179,10 +179,14 @@ final class AppController {
             let moved = self?.fitGridAndArrange(on: screen) ?? 0
             let grid = Store.shared.config.grid(for: screen.tesseraKey)
             let detail = AutoArrange.lastOutcomes
-                .map { "  \($0.app): \($0.outcome.describedInItalian)" }
+                .map { "  \($0.app): \($0.outcome.described)" }
                 .joined(separator: "\n")
-            let report = "Schermo \(screen.localizedName): griglia \(grid.cols)×\(grid.rows) "
-                + "dalle finestre aperte, sistemate \(moved).\n" + detail + "\n"
+            let report = (moved == 1
+                ? String(format: tr("Screen %@: grid %d×%d from the open windows, 1 arranged."),
+                         screen.localizedName, grid.cols, grid.rows)
+                : String(format: tr("Screen %@: grid %d×%d from the open windows, %d arranged."),
+                         screen.localizedName, grid.cols, grid.rows, moved))
+                + "\n" + detail + "\n"
             try? report.write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
                               atomically: true, encoding: .utf8)
         }
@@ -190,16 +194,17 @@ final class AppController {
             // Settings are a page of the popover now, so this toggles the popover on that page.
             let wasOpen = MenuBarController.shared.isPopoverShown
             MenuBarController.shared.togglePopover(page: .settings)
-            let report = wasOpen ? "Popover chiuso.\n" : "Impostazioni aperte nel popover.\n"
+            let report = (wasOpen ? tr("Popover closed.") : tr("Settings open in the popover.")) + "\n"
             try? report.write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
                               atomically: true, encoding: .utf8)
         }
         center.addObserver(forName: Self.exitFullScreenNotification, object: nil, queue: .main) { _ in
             let windows = AX.fullScreenWindows()
             let restored = windows.filter(AX.exitFullScreen).map(\.appName)
-            let report = windows.isEmpty
-                ? "Nessuna finestra a tutto schermo.\n"
-                : "Riportate fuori dal fullscreen: \(restored.joined(separator: ", "))\n"
+            let report = (windows.isEmpty
+                ? tr("No window is in full screen.")
+                : String(format: tr("Brought back out of full screen: %@"),
+                         restored.joined(separator: ", "))) + "\n"
             try? report.write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
                               atomically: true, encoding: .utf8)
         }
@@ -212,10 +217,14 @@ final class AppController {
             let screen = AppController.screen(matching: parts.count > 1 ? parts[1] : nil)
             let moved = self?.arrange(screen, with: strategy) ?? 0
             let detail = AutoArrange.lastOutcomes
-                .map { "  \($0.app): \($0.outcome.describedInItalian)" }
+                .map { "  \($0.app): \($0.outcome.described)" }
                 .joined(separator: "\n")
-            let report = "Schermo \(screen.localizedName): sistemate \(moved) finestre "
-                + "con la strategia «\(strategy.label)».\n" + detail + "\n"
+            let report = (moved == 1
+                ? String(format: tr("Screen %@: 1 window arranged with the “%@” arrangement."),
+                         screen.localizedName, strategy.label)
+                : String(format: tr("Screen %@: %d windows arranged with the “%@” arrangement."),
+                         screen.localizedName, moved, strategy.label))
+                + "\n" + detail + "\n"
                 + diagnosticsText()
             try? report.write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
                               atomically: true, encoding: .utf8)
@@ -247,14 +256,14 @@ final class AppController {
     private func promptForAccessibility() {
         AX.requestTrust()
         let alert = NSAlert()
-        alert.messageText = "Tessera ha bisogno dell'accesso Accessibilità"
-        alert.informativeText = """
-            Per spostare e ridimensionare le finestre delle altre app, Tessera va autorizzata in \
-            Impostazioni di Sistema › Privacy e sicurezza › Accessibilità. Appena spunti la \
-            casella funziona: non serve riavviarla.
-            """
-        alert.addButton(withTitle: "Apri Impostazioni")
-        alert.addButton(withTitle: "Più tardi")
+        alert.messageText = tr("Tessera needs Accessibility access")
+        alert.informativeText = tr("""
+            To move and resize the windows of other apps, Tessera has to be allowed in System \
+            Settings › Privacy & Security › Accessibility. It works the moment you tick the box: \
+            no restart needed.
+            """)
+        alert.addButton(withTitle: tr("Open Settings"))
+        alert.addButton(withTitle: tr("Later"))
         if alert.runModal() == .alertFirstButtonReturn { AX.openAccessibilitySettings() }
     }
 }
@@ -280,23 +289,28 @@ func diagnosticsText() -> String {
     let config = Store.shared.config
     var out = ""
     func print(_ line: String) { out += line + "\n" }
-    print("Tessera \(appVersion) — diagnostica (nessuna finestra viene spostata)")
-    print("Accesso Accessibilità: \(AX.isTrusted ? "attivo" : "NON attivo — autorizza l'app e riprova")")
-    print("Strategia predefinita: \(config.defaultStrategy.label)\n")
+    print(String(format: tr("Tessera %@ — diagnostics (no window is moved)"), appVersion))
+    print(String(format: tr("Accessibility access: %@"),
+                 AX.isTrusted ? tr("on") : tr("NOT on — allow the app and try again")))
+    print(String(format: tr("Default arrangement: %@"), config.defaultStrategy.label) + "\n")
 
     for screen in NSScreen.screens {
         let key = screen.tesseraKey
         let grid = config.grid(for: key)
         let windows = AutoArrange.windows(on: screen)
         let plan = AutoArrange.plan(on: screen)
-        print("Schermo \(screen.localizedName) [\(key)]")
+        print(String(format: tr("Screen %@ [%@]"), screen.localizedName, key))
         print("  visibleFrame: \(short(screen.visibleFrame))")
         let origin = config.isAutoGrid(key)
-            ? " (automatica: si ricalcola quando disponi, non adesso)"
-            : (config.grids[key] == nil ? " (predefinita, mai modificata per questo schermo)" : " (fissa)")
-        print("  griglia: \(grid.cols)×\(grid.rows), gap esterno \(Int(grid.outerGap)) interno \(Int(grid.innerGap))"
+            ? tr(" (automatic: recomputed when you arrange, not now)")
+            : (config.grids[key] == nil
+               ? tr(" (default, never changed for this screen)")
+               : tr(" (fixed)"))
+        print(String(format: tr("  grid: %d×%d, outer gap %d, inner gap %d"),
+                     grid.cols, grid.rows, Int(grid.outerGap), Int(grid.innerGap))
               + origin)
-        print("  finestre su questa Scrivania: \(windows.count) — ne sistemerebbe \(plan.tiled), ne lascia \(plan.untouched)")
+        print(String(format: tr("  windows on this Desktop: %d — would arrange %d, would leave %d"),
+                     windows.count, plan.tiled, plan.untouched))
 
         let ordered = AX.sortedFrontToBack(windows).prefix(grid.cols * grid.rows).sorted { a, b in
             let fa = a.frame ?? .zero, fb = b.frame ?? .zero
@@ -308,8 +322,9 @@ func diagnosticsText() -> String {
                                           masterFraction: config.masterFraction)
         for (window, cell) in zip(ordered, cells) {
             let target = Geometry.frame(for: cell, in: grid, on: screen.visibleFrame)
-            print("    \(window.appName) — \(short(window.frame ?? .zero))"
-                  + " → cella col \(cell.col) riga \(cell.row) \(cell.w)×\(cell.h) = \(short(target))")
+            print(String(format: tr("    %@ — %@ → cell col %d row %d %d×%d = %@"),
+                         window.appName, short(window.frame ?? .zero),
+                         cell.col, cell.row, cell.w, cell.h, short(target)))
         }
         print("")
     }
@@ -334,12 +349,16 @@ if let index = arguments.firstIndex(of: "--icon"), arguments.count > index + 2 {
     exit(0)
 }
 
+// The command-line paths print translated text as well, so the stored preference has to be
+// read before the first print: touching the store is what resolves `lang`.
+_ = Store.shared.config
+
 /// Asks the running app to run a command and prints the reply it writes out.
 func askRunningApp(_ name: Notification.Name, strategy: String?) -> Bool {
     let reply = AppController.supportDirectory.appendingPathComponent("diagnose.txt")
     try? FileManager.default.removeItem(at: reply)
     guard !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty else {
-        print("Tessera non è in esecuzione: aprila e riprova.")
+        print(tr("Tessera is not running: open it and try again."))
         return false
     }
     DistributedNotificationCenter.default().postNotificationName(name, object: strategy,
@@ -351,7 +370,7 @@ func askRunningApp(_ name: Notification.Name, strategy: String?) -> Bool {
         }
         Thread.sleep(forTimeInterval: 0.1)
     }
-    print("Tessera non ha risposto entro 4 secondi.")
+    print(tr("Tessera did not answer within 4 seconds."))
     return false
 }
 

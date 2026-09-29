@@ -201,12 +201,17 @@ enum AX {
             return true
         }
 
-        var describedInItalian: String {
+        var described: String {
             switch self {
-            case .placed: return "ok"
-            case .ownSize(let size): return "l'app impone \(Int(size.width))×\(Int(size.height))"
+            case .placed:
+                return tr("ok")
+            case .ownSize(let size):
+                return String(format: tr("the app insists on %d×%d"),
+                              Int(size.width), Int(size.height))
             case .didNotMove(let landed):
-                return "non si è mossa" + (landed.map { ", è a \(Int($0.minX)),\(Int($0.minY))" } ?? "")
+                return tr("did not move") + (landed.map {
+                    String(format: tr(", it is at %d,%d"), Int($0.minX), Int($0.minY))
+                } ?? "")
             }
         }
     }
