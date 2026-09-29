@@ -158,12 +158,23 @@ struct Config: Codable {
     var defaultStrategy: ArrangeStrategy = .balanced
     var masterFraction: CGFloat = 0.6        // width of the master tile in "master + stack"
     var language = "system"                  // system | en | it
+    /// The smallest size each app has been seen to accept, by bundle id. It is learned for
+    /// free: when a window refuses the cell it was given, the size it keeps is its minimum —
+    /// an upper bound on the true one, which every smaller refusal brings closer.
+    var minimums: [String: [Double]] = [:]
 
     func grid(for screenKey: String) -> GridSpec {
         (grids[screenKey] ?? .default).clamped()
     }
 
     func isAutoGrid(_ screenKey: String) -> Bool { autoGrid[screenKey] ?? false }
+
+    /// What is known about how small this app goes. Nothing known means it has never refused
+    /// a cell, and an app that has never refused is assumed to fit.
+    func minimum(forBundle bundleID: String) -> CGSize? {
+        guard let pair = minimums[bundleID], pair.count == 2 else { return nil }
+        return CGSize(width: pair[0], height: pair[1])
+    }
 
     init() {}
 
@@ -187,6 +198,7 @@ struct Config: Codable {
         defaultStrategy = value(.defaultStrategy, .balanced)
         masterFraction = value(.masterFraction, 0.6)
         language = value(.language, "system")
+        minimums = value(.minimums, [:])
     }
 }
 

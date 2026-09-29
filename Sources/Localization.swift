@@ -51,6 +51,11 @@ let italian: [String: String] = [
     "%d dashed windows won't fit exactly": "%d tratteggiate non si piazzano esatte",
     "Accessibility access is needed to see the windows.":
         "Serve l'accesso Accessibilità per vedere le finestre.",
+    "1 window needs more room than a %d×%d cell.":
+        "1 finestra ha bisogno di più spazio di una cella da %d×%d.",
+    "%d windows need more room than a %d×%d cell.":
+        "%d finestre hanno bisogno di più spazio di una cella da %d×%d.",
+    "Auto picks cells they can use.": "Auto sceglie celle che possono usare.",
     "Drag a window to move it, hold ⌥ to give it more cells.":
         "Trascina una finestra per spostarla, tieni ⌥ per darle più celle.",
     "Click a cell to place %@.": "Clicca una cella per piazzare %@.",

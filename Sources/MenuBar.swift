@@ -28,6 +28,7 @@ final class PopoverModel: ObservableObject {
     @Published fileprivate(set) var grid = GridSpec.default
     @Published fileprivate(set) var autoGrid = false
     @Published fileprivate(set) var screenAspect: CGFloat = 1.6
+    @Published fileprivate(set) var cellSize = CGSize(width: 800, height: 600)
     @Published fileprivate(set) var occupants: [AutoArrange.Occupant] = []
     @Published fileprivate(set) var tiled = 0
     @Published fileprivate(set) var untouched = 0
@@ -56,6 +57,7 @@ final class PopoverModel: ObservableObject {
         // look. Otherwise opening this popover redraws the map against a grid nobody applied.
         grid = config.grid(for: screen.tesseraKey)
         screenAspect = frame.height > 0 ? frame.width / frame.height : 1.6
+        cellSize = AutoArrange.cellSize(of: grid, on: frame)
         occupants = trusted ? AutoArrange.occupancy(on: screen) : []
         let plan = trusted ? AutoArrange.plan(on: screen) : (tiled: 0, untouched: 0)
         tiled = plan.tiled
@@ -77,6 +79,7 @@ extension PopoverModel {
         grid = GridSpec(cols: 3, rows: 2)
         autoGrid = true
         screenAspect = 21.0 / 9.0
+        cellSize = CGSize(width: 1136, height: 693)
         // The renderer has no Accessibility access, so these stand-ins carry a window that
         // points at nothing: the map only ever draws their name and their cell.
         let nowhere = ManagedWindow(element: AXUIElementCreateSystemWide(), pid: 0,
@@ -511,13 +514,19 @@ struct TesseraPopover: View {
         }
     }
 
-    /// The windows that will not end up exactly where a layout puts them, said once, quietly.
-    /// What stays out of the grid for lack of cells belongs to the arrange button, not here.
+    /// Said once, quietly: how many of the windows on this screen cannot use a cell this size.
+    /// On a small screen with demanding apps that is the whole story, so the cell size is named
+    /// and, when the grid was chosen by hand, Auto is offered — it will not propose cells the
+    /// apps refuse.
     private var statusNote: String? {
         guard model.resistant > 0 else { return nil }
-        return model.resistant == 1
-            ? tr("1 dashed window won't fit exactly")
-            : String(format: tr("%d dashed windows won't fit exactly"), model.resistant)
+        let cell = model.cellSize
+        let head = model.resistant == 1
+            ? String(format: tr("1 window needs more room than a %d×%d cell."),
+                     Int(cell.width), Int(cell.height))
+            : String(format: tr("%d windows need more room than a %d×%d cell."),
+                     model.resistant, Int(cell.width), Int(cell.height))
+        return model.autoGrid ? head : head + " " + tr("Auto picks cells they can use.")
     }
 
     private var mapNote: String {

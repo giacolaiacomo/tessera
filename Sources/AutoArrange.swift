@@ -193,6 +193,40 @@ enum AutoArrange {
         return assignment
     }
 
+    // MARK: What an app will accept
+
+    /// Whether this app is known not to fit a cell of this size. An app never seen refusing
+    /// anything is assumed to fit: that is how it gets the chance to prove otherwise.
+    static func fits(_ window: ManagedWindow, in cell: CGSize) -> Bool {
+        guard let minimum = Store.shared.config.minimum(forBundle: window.bundleID) else { return true }
+        return minimum.width <= cell.width + 2 && minimum.height <= cell.height + 2
+    }
+
+    /// Records what the last arrangement taught us. A window that kept its own size was asked
+    /// for something smaller and refused: the size it kept is an upper bound on its minimum,
+    /// so the smallest refusal ever seen is the best estimate we have.
+    private static func learn(from outcomes: [(window: ManagedWindow, outcome: AX.PlacementOutcome)]) {
+        var learned: [String: [Double]] = [:]
+        for (window, outcome) in outcomes {
+            guard case .ownSize(let size) = outcome, !window.bundleID.isEmpty else { continue }
+            let known = Store.shared.config.minimum(forBundle: window.bundleID)
+            let width = min(Double(size.width), Double(known?.width ?? .greatestFiniteMagnitude))
+            let height = min(Double(size.height), Double(known?.height ?? .greatestFiniteMagnitude))
+            if known == nil || width < Double(known!.width) - 1 || height < Double(known!.height) - 1 {
+                learned[window.bundleID] = [width, height]
+            }
+        }
+        guard !learned.isEmpty else { return }
+        Store.shared.mutate { config in
+            for (bundle, size) in learned { config.minimums[bundle] = size }
+        }
+    }
+
+    /// The size of one cell of a grid on a screen.
+    static func cellSize(of grid: GridSpec, on frame: CGRect) -> CGSize {
+        Geometry.frame(for: CellRect(col: 0, row: 0), in: grid, on: frame).size
+    }
+
     /// The moves an arrangement would make: which window into which cell, and the rectangle
     /// that cell is. `apply` and `--diagnose` both go through here, so what the diagnostics
     /// print is what would really happen — including the pairing.
@@ -200,7 +234,13 @@ enum AutoArrange {
                       strategy: ArrangeStrategy)
         -> [(window: ManagedWindow, cell: CellRect, target: CGRect)] {
         let visible = screen.visibleFrame
-        let chosen = AX.sortedFrontToBack(windows).prefix(grid.cols * grid.rows)
+        // On an automatic screen the grid is Tessera's own choice, so it must not put a window
+        // in a cell the app will refuse: the ones that cannot fit are left where they are and
+        // counted as untouched. A grid the user set by hand is obeyed as it is.
+        let candidates = Store.shared.config.isAutoGrid(screen.tesseraKey)
+            ? windows.filter { fits($0, in: cellSize(of: grid, on: visible)) }
+            : windows
+        let chosen = AX.sortedFrontToBack(candidates).prefix(grid.cols * grid.rows)
         // Reading order first, so the pairing starts from the predictable answer.
         let ordered = chosen.sorted { a, b in
             let fa = a.frame ?? CGRect.zero, fb = b.frame ?? CGRect.zero
@@ -320,6 +360,7 @@ enum AutoArrange {
             }
             return (move.window.appName, outcome)
         }
+        learn(from: zip(moves, lastOutcomes).map { (window: $0.window, outcome: $1.outcome) })
         return lastOutcomes.filter { $0.outcome.succeeded }.count
     }
 
@@ -333,9 +374,12 @@ enum AutoArrange {
     /// How many windows "arrange all" would move on this screen, and how many it would leave alone.
     static func plan(on screen: NSScreen) -> (tiled: Int, untouched: Int) {
         let grid = Store.shared.config.grid(for: screen.tesseraKey)
-        let total = windows(on: screen).count
-        let tiled = min(total, grid.cols * grid.rows)
-        return (tiled, total - tiled)
+        let open = windows(on: screen)
+        // Through the same planner the arrangement uses, or the count promises one thing and
+        // the arrangement does another.
+        let tiled = moves(for: open, on: screen, grid: grid,
+                          strategy: Store.shared.config.defaultStrategy).count
+        return (tiled, open.count - tiled)
     }
 
     /// Every placeable window currently on this screen and on this Space.
@@ -356,27 +400,48 @@ enum AutoArrange {
     /// usable wide than tall), and cells should not be left over. On a 34" ultrawide four
     /// windows come out 2×2, six come out 3×2; on the laptop four come out 2×2 as well.
     static func bestGrid(for n: Int, on screen: NSScreen, like existing: GridSpec,
-                         targetAspect: CGFloat = 1.45) -> GridSpec {
-        bestGrid(for: n, fitting: screen.visibleFrame, like: existing, targetAspect: targetAspect)
+                         targetAspect: CGFloat = 1.45, needs: [CGSize?] = []) -> GridSpec {
+        bestGrid(for: n, fitting: screen.visibleFrame, like: existing,
+                 targetAspect: targetAspect, needs: needs)
     }
 
     static func bestGrid(for n: Int, fitting frame: CGRect, like existing: GridSpec,
-                         targetAspect: CGFloat = 1.45) -> GridSpec {
+                         targetAspect: CGFloat = 1.45, needs: [CGSize?] = []) -> GridSpec {
         guard n > 0, frame.height > 0 else { return existing }
         let aspect = frame.width / frame.height
+
+        /// How many of these windows could actually use a cell this size. An app nothing is
+        /// known about counts as fitting: it has never refused anything.
+        func usable(_ cell: CGSize) -> Int {
+            guard !needs.isEmpty else { return n }
+            return needs.filter { $0 == nil || ($0!.width <= cell.width + 2 && $0!.height <= cell.height + 2) }.count
+        }
+
         var best = (cols: 1, rows: n)
+        var bestShown = -1
         var bestScore = CGFloat.greatestFiniteMagnitude
-        for cols in 1...n {
-            let rows = Int(ceil(Double(n) / Double(cols)))
-            let spare = cols * rows - n
-            // A couple of empty cells are tolerable if they buy a much better shape; a grid
-            // that is mostly holes is not what "show me everything" means.
-            guard spare <= max(1, n / 3) else { continue }
-            let tileAspect = (aspect / CGFloat(cols)) * CGFloat(rows)
-            let score = abs(log(tileAspect / targetAspect)) + CGFloat(spare) * 0.35
-            if score < bestScore {
-                bestScore = score
-                best = (cols, rows)
+        for cols in 1...max(n, 1) {
+            for rows in 1...max(n, 1) {
+                let cells = cols * rows
+                // Cells nobody asked for: a couple are worth a better shape, a grid that is
+                // mostly holes is not what "show me everything" means.
+                let spare = max(0, cells - n)
+                guard spare <= max(1, n / 3) else { continue }
+                let candidate = GridSpec(cols: cols, rows: rows,
+                                         outerGap: existing.outerGap, innerGap: existing.innerGap)
+                let cell = cellSize(of: candidate, on: frame)
+                guard cell.width > 1, cell.height > 1 else { continue }
+                // Windows that would actually be visible in this grid. Fewer cells than there
+                // are windows is allowed — on a small screen with demanding apps it is the
+                // honest answer, and the windows left over stay where they are.
+                let shown = min(usable(cell), cells)
+                let tileAspect = (aspect / CGFloat(cols)) * CGFloat(rows)
+                let score = abs(log(tileAspect / targetAspect)) + CGFloat(spare) * 0.35
+                if shown > bestShown || (shown == bestShown && score < bestScore) {
+                    bestShown = shown
+                    bestScore = score
+                    best = (cols, rows)
+                }
             }
         }
         return GridSpec(cols: best.cols, rows: best.rows,
@@ -408,7 +473,12 @@ enum AutoArrange {
         let config = Store.shared.config
         let current = config.grid(for: key)
         guard config.isAutoGrid(key) else { return current }
-        let wanted = bestGrid(for: windows(on: screen).count, on: screen, like: current)
+        // What the apps on this screen are known to need, so the grid never proposes cells
+        // they will refuse: on a laptop screen with demanding apps that means fewer, bigger
+        // cells, and the windows that do not fit are left alone rather than piled up.
+        let open = windows(on: screen)
+        let needs = open.map { Store.shared.config.minimum(forBundle: $0.bundleID) }
+        let wanted = bestGrid(for: open.count, on: screen, like: current, needs: needs)
         writeGrid(wanted, for: key)
         return wanted
     }
@@ -439,10 +509,11 @@ enum AutoArrange {
                             appName: window.appName,
                             cell: cell,
                             isFocused: focused.map { CFEqual($0.element, window.element) } ?? false,
-                            // Bigger than the cell it sits in, or past what the grid can tile.
-                            resistant: index >= cellCount
-                                || frame.width > cellSize.width + 8
-                                || frame.height > cellSize.height + 8)
+                            // Dashed means "this one will not take that cell": an app known not
+                            // to go that small, or a window past what the grid can tile. Being
+                            // large right now is not the same thing — most windows shrink when
+                            // asked, and marking those would cry wolf.
+                            resistant: index >= cellCount || !fits(window, in: cellSize.size))
         }
     }
 

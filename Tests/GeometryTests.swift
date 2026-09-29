@@ -205,5 +205,37 @@ do {
     check(CellRect(col: 0, row: 0).intersects(CellRect(col: 0, row: 0)), "a cell is in its own way")
 }
 
+// MARK: - A grid the apps can actually use
+
+// The real minimums measured on a MacBook screen: five of these six apps refuse a 493-wide
+// cell, so a 3×2 there is a pile, not a layout. With that knowledge the automatic grid has to
+// come back with fewer, bigger cells — even when that means not every window gets one.
+do {
+    let laptop = CGRect(x: 0, y: 57, width: 1512, height: 892)
+    let needs: [CGSize?] = [CGSize(width: 500, height: 434),   // Chrome
+                            CGSize(width: 709, height: 434),   // Notes
+                            CGSize(width: 744, height: 434),   // Activity Monitor
+                            CGSize(width: 759, height: 434),   // Mail
+                            CGSize(width: 800, height: 600),   // WhatsApp
+                            CGSize(width: 917, height: 503)]   // Calendar
+    let grid = AutoArrange.bestGrid(for: 6, fitting: laptop, like: .default, needs: needs)
+    let cell = AutoArrange.cellSize(of: grid, on: laptop)
+    check(grid.cols <= 2, "laptop with demanding apps: \(grid.cols)×\(grid.rows) is too fine")
+    let usable = needs.filter { $0!.width <= cell.width + 2 && $0!.height <= cell.height + 2 }.count
+    check(usable >= 3, "only \(usable) of 6 windows could use a \(Int(cell.width))×\(Int(cell.height)) cell")
+    // And the same six windows on the ultrawide: there the room is real, so the grid is not
+    // allowed to be timid.
+    let wide = AutoArrange.bestGrid(for: 6, fitting: ultrawide, like: .default, needs: needs)
+    check(wide.cols * wide.rows >= 6, "ultrawide with 6 windows: \(wide.cols)×\(wide.rows)")
+}
+
+// Knowing nothing about an app means giving it a chance: the grid is the one the count asks for.
+do {
+    let blind: [CGSize?] = Array(repeating: nil, count: 6)
+    check(AutoArrange.bestGrid(for: 6, fitting: ultrawide, like: .default, needs: blind)
+          == AutoArrange.bestGrid(for: 6, fitting: ultrawide, like: .default),
+          "unknown apps must not change the grid")
+}
+
 print(failures == 0 ? "ALL GEOMETRY CHECKS PASSED" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

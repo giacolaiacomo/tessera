@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Tessera learns how small each app goes** and stops proposing cells they cannot use. A window
+  that refuses its cell tells us its minimum for free; the automatic grid then picks fewer, bigger
+  cells on a screen that cannot hold more, and leaves the windows that do not fit where they are.
+  Measured on a 1512×892 laptop with six windows open: a 3×2 gave 493-wide cells that five of the
+  six apps refused, and the result was a pile; automatic now answers 2×2 and tiles the three that
+  fit, all of them exactly.
+- **The map's dashed tiles now mean something precise**: this app will not take that cell. A
+  window that merely happens to be large right now is not dashed, because it will shrink when
+  asked.
+- **`--diagnose` and the popover count what the arrangement will really do**, including the
+  windows it will leave alone.
 - **Quick grids in the popover**: Auto plus the presets that suit the shape of that screen, one
   click away, with the arrangement named in a picker instead of hidden behind an icon. Picking an
   arrangement makes it the default and applies it.

@@ -26,6 +26,12 @@ screen onto a grid — 3×2, 4×2, or anything up to 32×32 — instead of the u
 
 ## Features
 
+- **It knows how small your apps go.** Every time a window refuses the cell it was given,
+  Tessera remembers the size it kept — that is the app's minimum, learned for free. The
+  automatic grid then never proposes cells your apps would refuse: on a 1512-wide laptop screen
+  with apps that will not go below ~750, that means two columns, not three, and the windows that
+  cannot fit are left where they are instead of being piled up. A grid you set by hand is still
+  obeyed to the letter, and the popover tells you how many windows need more room than its cells.
 - **A grid per screen, fixed or automatic.** Fixed is the grid you pick: 2×1, 3×1, 4×1, 3×2 and
   4×2 are one click away as presets in the popover, and the steppers go up to 32×32. Automatic
   derives the grid from how many windows are open on that screen, so they all fit and all stay
@@ -52,7 +58,8 @@ screen onto a grid — 3×2, 4×2, or anything up to 32×32 — instead of the u
 - **Everything in one popover.** Settings are a page of it, not a separate window. English and
   Italian (System / English / Italiano).
 - **Nothing leaves your Mac.** No network requests at all, no telemetry, no account. Configuration
-  is one readable file at `~/Library/Application Support/Tessera/config.json`.
+  is one readable file at `~/Library/Application Support/Tessera/config.json` — including the app
+  minimums it has learned, which are bundle ids and sizes, nothing else.
 - **Small.** Swift with AppKit and SwiftUI, no dependencies, no Xcode project, about 29 MB of RAM.
 
 ## Install
