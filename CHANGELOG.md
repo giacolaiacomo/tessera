@@ -2,8 +2,25 @@
 
 ## Unreleased
 
+- **Fixed: the first "Arrange all" placed the windows but did not resize them, and it took a
+  second one to get it right.** The cause is the oldest trap in this codebase, walked into from
+  a new direction. Tessera writes a position and a size, waits, and then corrects any window
+  that did not land — and the correction used to rewrite the *size it had just read*. When a
+  window was read before its app had finished resizing, that read returned the old size, and
+  writing it back cancelled the resize still in flight: the window ended up in exactly the right
+  place at exactly the wrong size. Two things now make that impossible. Every correction after
+  the first write is a **move and only a move** — Tessera never writes a size it read a moment
+  earlier. And the wait no longer mistakes a window that has not started moving for one that has
+  finished: it waits for each window that was actually asked for something to visibly answer,
+  and for three consecutive quiet reads, because Chrome animates its resize and two reads 20 ms
+  apart can both land in the same lull. Checked by arranging from a scrambled screen and
+  comparing the result of one pass with the result of two: identical, three times over.
+- A side effect of the same bug: the app minimums Tessera learns were being taught frames caught
+  in mid-air. Chrome was recorded as needing 927×627 when it really stops at 500×434, and a
+  wrong minimum makes the automatic grid too coarse.
+
 - **An arrangement is about twenty times faster.** Measured on a 1512×892 laptop with six windows
-  that all really move: **1584 ms before, 65 ms now**; on an ultrawide with four, 263 ms → 46 ms.
+  that all really move: **1584 ms before, 130 ms now**; on an ultrawide with four, 263 ms → 72 ms.
   Almost none of that was the windows. The writes themselves take 2–13 ms; the rest was Tessera
   sleeping — a flat 90 ms before it dared look at the result and a flat 150 ms at the end,
   whether or not anything had happened. Tessera now waits for the only thing that can actually

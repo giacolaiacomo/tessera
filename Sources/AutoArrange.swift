@@ -311,16 +311,42 @@ enum AutoArrange {
         // change?" read a window that was already in its final place as a dropped write. Both
         // guesses cost the full timeout and then a pointless second write. Stillness is not a
         // guess.
+        // Which windows were actually asked for something. A window already sitting on its cell
+        // was not, and waiting for it to change is waiting for something that will never happen
+        // — that distinction is the whole reason this is not just "wait until nothing moves".
+        let asked = moves.indices.filter { !AX.same(before[$0], moves[$0].target) }
         var rounds = 0
+        var quiet = 0
         var previous: [CGRect?] = before.map { $0 }
-        let giveUp = DispatchTime.now().uptimeNanoseconds + 400_000_000
+        let giveUp = DispatchTime.now().uptimeNanoseconds + 600_000_000
         while DispatchTime.now().uptimeNanoseconds < giveUp {
-            usleep(12_000)
+            usleep(20_000)
             rounds += 1
             let now = moves.map { AX.frame(of: $0.window.element) }
             let still = zip(now, previous).allSatisfy(AX.same)
+            // Stillness alone is not an answer: a window that has not started moving yet is
+            // just as still as one that has finished. Every window that was asked for something
+            // has to have visibly answered first — otherwise the correction below reads a frame
+            // from before the resize and puts the window in the right place at the old size,
+            // which is exactly what "it arranged them but did not resize them" looks like.
+            let answered = asked.allSatisfy { index in
+                guard let current = now[index] else { return true }
+                if !AX.same(current, before[index]) { return true }
+                // Nothing has changed — which is also an answer when the window is already on
+                // its cell's corner and only its size is wrong. That is an app refusing a size,
+                // and an app refuses instantly; there is nothing in flight to wait for. Only a
+                // window that is neither where it was asked to be nor moving has said nothing.
+                let here = AX.toAX(current), there = AX.toAX(moves[index].target)
+                return abs(here.minX - there.minX) <= 4 && abs(here.minY - there.minY) <= 4
+            }
             previous = now
-            if still && rounds > 1 { break }
+            // One quiet read is not enough. Chrome does not resize in one go, it animates, and
+            // two reads 20 ms apart can both land in the same lull — which is how an
+            // arrangement came out positioned but not resized, and how Tessera then "learned"
+            // a minimum size for Chrome that was really just a frame caught in mid-air. Three
+            // consecutive quiet reads, 60 ms of nothing happening, is an answer.
+            quiet = still ? quiet + 1 : 0
+            if quiet >= 3 && answered { break }
         }
         clock.mark("settle ×\(rounds)")
 
@@ -342,7 +368,7 @@ enum AutoArrange {
             rect.origin.y = min(max(rect.minY, visible.minY),
                                 max(visible.minY, visible.maxY - rect.height))
             guard abs(rect.minX - now.minX) > 2 || abs(rect.minY - now.minY) > 2 else { continue }
-            AX.writeFrame(moves[index].window.element, to: rect)
+            AX.writePosition(moves[index].window.element, to: AX.toAX(rect).origin)
             lastCorrections += 1
             slid = true
         }

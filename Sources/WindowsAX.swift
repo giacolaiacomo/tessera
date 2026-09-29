@@ -333,6 +333,17 @@ enum AX {
         return true
     }
 
+    /// Moves a window without saying anything about its size. Every correction Tessera makes
+    /// after the first write is a move, never a resize: writing a size read a moment earlier is
+    /// how you cancel a resize that is still in flight, and then the windows come out neatly
+    /// arranged at the wrong sizes.
+    @discardableResult
+    static func writePosition(_ window: AXUIElement, to topLeft: CGPoint) -> AXError {
+        var origin = topLeft
+        guard let value = AXValueCreate(.cgPoint, &origin) else { return .failure }
+        return AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
+    }
+
     /// Two frames that are the same to the nearest pixel.
     static func same(_ a: CGRect?, _ b: CGRect?) -> Bool {
         guard let a, let b else { return a == nil && b == nil }
@@ -349,14 +360,17 @@ enum AX {
     static func frameOnceStill(of window: AXUIElement, wasAt before: CGRect?) -> CGRect? {
         var previous = before
         var polls = 0
-        let giveUp = DispatchTime.now().uptimeNanoseconds + 250_000_000
+        var quiet = 0
+        let giveUp = DispatchTime.now().uptimeNanoseconds + 400_000_000
         while DispatchTime.now().uptimeNanoseconds < giveUp {
-            usleep(12_000)
+            usleep(20_000)
             polls += 1
             let now = frame(of: window)
-            let stopped = same(now, previous)
+            // Three quiet reads, not one: an app like Chrome animates its resize, and two reads
+            // can fall in the same lull and be mistaken for a window that has finished moving.
+            quiet = same(now, previous) ? quiet + 1 : 0
             previous = now
-            if stopped && (!same(now, before) || polls >= 5) { return now }
+            if quiet >= 3 && (!same(now, before) || polls >= 5) { return now }
         }
         return previous
     }
@@ -373,7 +387,7 @@ enum AX {
                           width: now.width, height: now.height)
         rect.origin.x = min(max(rect.minX, visible.minX), max(visible.minX, visible.maxX - rect.width))
         rect.origin.y = min(max(rect.minY, visible.minY), max(visible.minY, visible.maxY - rect.height))
-        writeFrame(window, to: rect)
+        writePosition(window, to: toAX(rect).origin)
     }
 
     /// The screen a window mostly sits on.
