@@ -57,7 +57,12 @@ for strategy in ArrangeStrategy.allCases {
             }
         }
         check(!cover.contains(where: { $0 > 1 }), "\(strategy) n=\(n): overlapping tiles")
-        check(!cover.contains(0), "\(strategy) n=\(n): uncovered cells")
+        if strategy == .cells {
+            // One cell each, in reading order: coverage is n cells, no more.
+            check(cover.filter { $0 == 1 }.count == n, "\(strategy) n=\(n): \(cover.filter { $0 == 1 }.count) cells used")
+        } else {
+            check(!cover.contains(0), "\(strategy) n=\(n): uncovered cells")
+        }
     }
 }
 }

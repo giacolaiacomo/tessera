@@ -125,9 +125,8 @@ struct Config: Codable {
     var grids: [String: GridSpec] = [:]     // screenKey -> grid
     var zones: [Zone] = []
     var layouts: [Layout] = []
-    var showOverlayOnDrag = true
-    var overlayModifierOnly = false          // require ⌥ held during the drag
     var launchAtLogin = false
+    var rearrangeOnGridChange = true         // changing the grid re-tiles that screen at once
     var autoFitNewWindows = false            // a new window drops into the biggest free area
     var defaultStrategy: ArrangeStrategy = .balanced
     var masterFraction: CGFloat = 0.6        // width of the master tile in "master + stack"

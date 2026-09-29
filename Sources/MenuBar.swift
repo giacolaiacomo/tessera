@@ -1,427 +1,382 @@
-// Tessera — the status item and its menu: the grid you can click, the zones, the automatic
+// Tessera — the status item and its popover: the grid you can click, the zones, the automatic
 // arrangements and the saved layouts.
 //
-// The menu is rebuilt in `menuWillOpen` because everything it shows depends on where the mouse
-// is and on which window is in front at that instant.
+// The popover is a SwiftUI view built when it opens and dropped when it closes: everything it
+// shows depends on where the mouse is and on which window is in front at that instant, so there
+// is nothing worth keeping alive in between.
 
 import AppKit
+import SwiftUI
+
+// MARK: - What the popover shows
+
+/// A snapshot of the state the popover draws, taken when it opens and whenever the config changes.
+final class PopoverModel: ObservableObject {
+    @Published fileprivate(set) var trusted = false
+    @Published fileprivate(set) var appName: String?
+    @Published fileprivate(set) var grid = GridSpec.default
+    @Published fileprivate(set) var screenAspect: CGFloat = 1.6
+    @Published fileprivate(set) var tiled = 0
+    @Published fileprivate(set) var untouched = 0
+    @Published fileprivate(set) var zones: [Zone] = []
+    @Published fileprivate(set) var layouts: [Layout] = []
+    @Published fileprivate(set) var strategy = ArrangeStrategy.balanced
+
+    var canPlace: Bool { trusted && appName != nil }
+
+    func reload(window: ManagedWindow?) {
+        let config = Store.shared.config
+        let screen = NSScreen.underMouse
+        let frame = screen.visibleFrame
+        trusted = AX.isTrusted
+        appName = window?.appName
+        grid = config.grid(for: screen.tesseraKey)
+        screenAspect = frame.height > 0 ? frame.width / frame.height : 1.6
+        let plan = trusted ? AutoArrange.plan(on: screen) : (tiled: 0, untouched: 0)
+        tiled = plan.tiled
+        untouched = plan.untouched
+        zones = config.zones
+        layouts = config.layouts
+        strategy = config.defaultStrategy
+    }
+}
 
 // MARK: - The clickable grid
 
-/// A miniature of the screen's grid. Click a cell or drag over several to pick an area.
-/// Flipped coordinates, so row 0 is the top row exactly as in `CellRect`.
-final class MenuBarGridView: NSView {
-    private let grid: GridSpec
-    private let screenAspect: CGFloat
-    private let headerText: String
-    private let placementEnabled: Bool
+/// A miniature of the screen's grid: click a cell or drag over several to pick an area.
+/// Row 0 is the top row, exactly as in `CellRect`, which is also SwiftUI's y direction.
+struct GridPicker: View {
+    let grid: GridSpec
+    let screenAspect: CGFloat
+    var selected: CellRect?
+    var enabled = true
+    let onPick: (CellRect) -> Void
 
-    /// Called on mouse-up with the picked area.
-    var onPick: ((CellRect) -> Void)?
+    @State private var anchor: CellRect?
+    @State private var highlight: CellRect?
 
-    private var anchor: (col: Int, row: Int)?
-    private var highlight: CellRect?
-    private var trackingArea: NSTrackingArea?
-
-    private let padding: CGFloat = 12
-    private let headerHeight: CGFloat = 18
-    private static let gridWidth: CGFloat = 240
-
-    init(grid: GridSpec, screen: NSScreen, headerText: String, placementEnabled: Bool) {
-        self.grid = grid.clamped()
-        let frame = screen.visibleFrame
-        self.screenAspect = frame.width > 0 ? frame.height / frame.width : 0.6
-        self.headerText = headerText
-        self.placementEnabled = placementEnabled
-        let gridHeight = (Self.gridWidth * self.screenAspect).rounded()
-        super.init(frame: NSRect(x: 0, y: 0,
-                                 width: Self.gridWidth + 2 * padding,
-                                 height: gridHeight + headerHeight + 2 * padding))
+    var body: some View {
+        GeometryReader { geometry in
+            Canvas { context, size in draw(in: context, size: size) }
+                .contentShape(Rectangle())
+                .gesture(drag(in: geometry.size))
+        }
+        .aspectRatio(screenAspect, contentMode: .fit)
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("not supported") }
-
-    override var isFlipped: Bool { true }
-
-    private var gridRect: CGRect {
-        CGRect(x: padding, y: padding + headerHeight,
-               width: bounds.width - 2 * padding,
-               height: bounds.height - headerHeight - 2 * padding)
-    }
-
-    // MARK: Drawing
-
-    override func draw(_ dirtyRect: NSRect) {
-        let header = NSAttributedString(string: headerText, attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ])
-        header.draw(in: CGRect(x: padding, y: padding - 2,
-                               width: bounds.width - 2 * padding, height: headerHeight))
-
-        let area = gridRect
-        NSColor.quaternaryLabelColor.setFill()
-        NSBezierPath(roundedRect: area, xRadius: 4, yRadius: 4).fill()
-
-        let cellW = area.width / CGFloat(grid.cols)
-        let cellH = area.height / CGFloat(grid.rows)
-        let inset: CGFloat = 1
-
-        NSColor.tertiaryLabelColor.setFill()
-        for row in 0..<grid.rows {
-            for col in 0..<grid.cols {
-                let cell = CGRect(x: area.minX + CGFloat(col) * cellW,
-                                  y: area.minY + CGFloat(row) * cellH,
+    private func draw(in context: GraphicsContext, size: CGSize) {
+        let g = grid.clamped()
+        let cellW = size.width / CGFloat(g.cols)
+        let cellH = size.height / CGFloat(g.rows)
+        let inset: CGFloat = cellW > 12 ? 1.5 : 0.75
+        for row in 0..<g.rows {
+            for col in 0..<g.cols {
+                let rect = CGRect(x: CGFloat(col) * cellW, y: CGFloat(row) * cellH,
                                   width: cellW, height: cellH).insetBy(dx: inset, dy: inset)
-                NSBezierPath(roundedRect: cell, xRadius: 2, yRadius: 2).fill()
+                context.fill(Path(roundedRect: rect, cornerRadius: 2),
+                             with: .color(.primary.opacity(0.12)))
             }
         }
+        guard let shown = highlight ?? selected else { return }
+        let cell = shown.clamped(to: g)
+        let rect = CGRect(x: CGFloat(cell.col) * cellW, y: CGFloat(cell.row) * cellH,
+                          width: CGFloat(cell.w) * cellW, height: CGFloat(cell.h) * cellH)
+            .insetBy(dx: inset, dy: inset)
+        context.fill(Path(roundedRect: rect, cornerRadius: 3),
+                     with: .color(.accentColor.opacity(enabled ? 0.85 : 0.35)))
+    }
 
-        if let highlight {
-            let rect = CGRect(x: area.minX + CGFloat(highlight.col) * cellW,
-                              y: area.minY + CGFloat(highlight.row) * cellH,
-                              width: CGFloat(highlight.w) * cellW,
-                              height: CGFloat(highlight.h) * cellH).insetBy(dx: inset, dy: inset)
-            NSColor.controlAccentColor.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
+    private func drag(in size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard enabled else { return }
+                let current = cell(at: value.location, in: size)
+                let start = anchor ?? CellRect(col: current.col, row: current.row)
+                anchor = start
+                highlight = CellRect.spanning((start.col, start.row), current).clamped(to: grid)
+            }
+            .onEnded { _ in
+                defer { anchor = nil; highlight = nil }
+                guard enabled, let picked = highlight else { return }
+                onPick(picked)
+            }
+    }
+
+    private func cell(at point: CGPoint, in size: CGSize) -> (col: Int, row: Int) {
+        let g = grid.clamped()
+        let col = Int(point.x / max(1, size.width / CGFloat(g.cols)))
+        let row = Int(point.y / max(1, size.height / CGFloat(g.rows)))
+        return (max(0, min(col, g.cols - 1)), max(0, min(row, g.rows - 1)))
+    }
+}
+
+// MARK: - Rows
+
+/// One tappable line of the popover: a label, an optional shortcut pushed to the right.
+struct PopoverRow: View {
+    let title: String
+    var trailing: String = ""
+    var note: String?
+    var enabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(title).font(.system(size: 12)).lineLimit(1)
+                    Spacer(minLength: 6)
+                    if !trailing.isEmpty {
+                        Text(trailing).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                }
+                if let note {
+                    Text(note).font(.system(size: 10.5)).foregroundStyle(.tertiary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-
-        NSColor.separatorColor.setStroke()
-        let border = NSBezierPath(roundedRect: area.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
-        border.lineWidth = 1
-        border.stroke()
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
     }
+}
 
-    // MARK: Tracking
+// MARK: - The popover
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(rect: bounds,
-                                  options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited,
-                                            .enabledDuringMouseDrag],
-                                  owner: self, userInfo: nil)
-        addTrackingArea(area)
-        trackingArea = area
-    }
+struct TesseraPopover: View {
+    @ObservedObject var model: PopoverModel
 
-    private func cell(at point: CGPoint) -> (col: Int, row: Int)? {
-        let area = gridRect
-        guard area.contains(point) else { return nil }
-        let col = Int((point.x - area.minX) / (area.width / CGFloat(grid.cols)))
-        let row = Int((point.y - area.minY) / (area.height / CGFloat(grid.rows)))
-        return (max(0, min(col, grid.cols - 1)), max(0, min(row, grid.rows - 1)))
-    }
-
-    private func update(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        guard let current = cell(at: point) else {
-            if anchor == nil { setHighlight(nil) }
-            return
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            header
+            if !model.trusted { warning }
+            gridSection
+            arrangeSection
+            if !model.zones.isEmpty { zonesSection }
+            layoutsSection
+            Divider()
+            footer
         }
-        setHighlight(CellRect.spanning(anchor ?? current, current).clamped(to: grid))
+        .padding(12)
+        .frame(width: 272)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private func setHighlight(_ rect: CellRect?) {
-        guard highlight != rect else { return }
-        highlight = rect
-        needsDisplay = true
+    private var header: some View {
+        HStack(spacing: 8) {
+            Text("Tessera").font(.system(size: 13, weight: .bold))
+            Spacer()
+            Button { MenuBarController.shared.openPreferences() } label: {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.borderless)
+            .help("Impostazioni")
+        }
     }
 
-    override func mouseEntered(with event: NSEvent) { update(with: event) }
-    override func mouseMoved(with event: NSEvent) { update(with: event) }
-    override func mouseDragged(with event: NSEvent) { update(with: event) }
-
-    override func mouseExited(with event: NSEvent) {
-        if anchor == nil { setHighlight(nil) }
+    private var warning: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Text("Senza l'accesso Accessibilità le finestre non si muovono.")
+                .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button("Apri") { MenuBarController.shared.openAccessibility() }.controlSize(.small)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.orange.opacity(0.12)))
     }
 
-    override func mouseDown(with event: NSEvent) {
-        guard placementEnabled else { return }
-        anchor = cell(at: convert(event.locationInWindow, from: nil))
-        update(with: event)
+    private var gridSection: some View {
+        TesseraCard(title: "Griglia \(model.grid.cols)×\(model.grid.rows)") {
+            Text(model.appName ?? "Nessuna finestra attiva")
+                .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+            GridPicker(grid: model.grid, screenAspect: model.screenAspect, enabled: model.canPlace) { cell in
+                MenuBarController.shared.place(in: cell)
+            }
+            .frame(height: 118)
+            .frame(maxWidth: .infinity)
+        }
     }
 
-    override func mouseUp(with event: NSEvent) {
-        defer { anchor = nil }
-        guard placementEnabled, anchor != nil, let picked = highlight else { return }
-        onPick?(picked)
+    private var arrangeSection: some View {
+        TesseraCard(title: "Sistema") {
+            PopoverRow(title: "Sistema tutto (\(windowCount(model.tiled)))",
+                       note: untouchedNote, enabled: model.trusted) {
+                MenuBarController.shared.arrange(with: model.strategy)
+            }
+            Menu("Sistema tutto con…") {
+                ForEach(ArrangeStrategy.allCases, id: \.self) { strategy in
+                    Button(strategy.label) { MenuBarController.shared.arrange(with: strategy) }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .font(.system(size: 12))
+            .disabled(!model.trusted)
+            PopoverRow(title: "Sistema la finestra attiva", enabled: model.canPlace) {
+                MenuBarController.shared.fitFocused()
+            }
+        }
+    }
+
+    private var zonesSection: some View {
+        TesseraCard(title: "Zone") {
+            ForEach(model.zones) { zone in
+                PopoverRow(title: zone.name,
+                           trailing: hotkeyDescription(keyCode: zone.keyCode, modifiers: zone.modifiers),
+                           enabled: model.canPlace) {
+                    MenuBarController.shared.place(in: zone.cell)
+                }
+            }
+        }
+    }
+
+    private var layoutsSection: some View {
+        TesseraCard(title: "Disposizioni") {
+            ForEach(model.layouts) { layout in
+                PopoverRow(title: layout.name,
+                           trailing: hotkeyDescription(keyCode: layout.keyCode, modifiers: layout.modifiers),
+                           enabled: model.trusted) {
+                    MenuBarController.shared.apply(layout)
+                }
+            }
+            PopoverRow(title: "Salva disposizione attuale…", enabled: model.trusted) {
+                MenuBarController.shared.saveLayout()
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            Text("Tessera \(appVersion)").font(.system(size: 10.5)).foregroundStyle(.tertiary)
+            Spacer()
+            Button("Esci") { NSApp.terminate(nil) }.buttonStyle(.borderless).font(.system(size: 11))
+        }
+    }
+
+    private func windowCount(_ n: Int) -> String {
+        n == 1 ? "1 finestra" : "\(n) finestre"
+    }
+
+    private var untouchedNote: String? {
+        guard model.untouched > 0 else { return nil }
+        return model.untouched == 1
+            ? "1 finestra resta dov'è"
+            : "\(model.untouched) finestre restano dove sono"
     }
 }
 
 // MARK: - The status item
 
-final class MenuBarController: NSObject, NSMenuDelegate {
+final class MenuBarController: NSObject, NSPopoverDelegate {
     static let shared = MenuBarController()
     private override init() {}
 
     private var statusItem: NSStatusItem?
-    private let menu = NSMenu()
+    private let popover = NSPopover()
+    private let model = PopoverModel()
 
-    /// The window that was focused just before the menu took over. Read in `menuWillOpen`, i.e.
-    /// before our own menu becomes frontmost, and used directly for every placement action:
-    /// going through `AppController.placeFocused` would re-read the frontmost app and could well
-    /// hit a different window by the time the user clicks.
+    /// The window that was focused just before the popover took over. Read before showing it —
+    /// afterwards the popover is frontmost and `AX.focusedWindow()` answers with the wrong thing.
     private var capturedWindow: ManagedWindow?
 
     func install() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = Self.statusIcon()
+        item.button?.image = Logo.statusItemIcon()
         item.button?.toolTip = "Tessera"
-        menu.delegate = self
-        menu.autoenablesItems = false   // we decide: without this AppKit re-enables the placement
-                                        // items even when Accessibility access is missing
-        item.menu = menu
+        item.button?.target = self
+        item.button?.action = #selector(toggle)
         statusItem = item
-        rebuild()
+        popover.behavior = .transient
+        popover.delegate = self
     }
 
-    /// Rebuilds the configuration-dependent parts. Safe before `install()`.
+    /// Re-reads the config while the popover is open. Closed, it will read it again on the next open.
     func refresh() {
-        guard statusItem != nil else { return }
-        rebuild()
+        guard popover.isShown else { return }
+        model.reload(window: capturedWindow)
     }
 
-    // MARK: Icon
-
-    private static func statusIcon() -> NSImage {
-        let size = NSSize(width: 16, height: 14)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        // Same glyph as drawIcon() in main.swift: one tall tile, three stacked ones.
-        let gap: CGFloat = 1.5
-        let area = CGRect(x: 1, y: 1, width: size.width - 2, height: size.height - 2)
-        let halfW = (area.width - gap) / 2
-        let thirdH = (area.height - 2 * gap) / 3
-        let tiles = [
-            CGRect(x: area.minX, y: area.minY, width: halfW, height: area.height),
-            CGRect(x: area.minX + halfW + gap, y: area.minY + 2 * (thirdH + gap), width: halfW, height: thirdH),
-            CGRect(x: area.minX + halfW + gap, y: area.minY + thirdH + gap, width: halfW, height: thirdH),
-            CGRect(x: area.minX + halfW + gap, y: area.minY, width: halfW, height: thirdH),
-        ]
-        NSColor.black.setFill()
-        for tile in tiles {
-            NSBezierPath(roundedRect: tile, xRadius: 1, yRadius: 1).fill()
-        }
-        image.unlockFocus()
-        image.isTemplate = true
-        return image
-    }
-
-    // MARK: Building the menu
-
-    func menuWillOpen(_ menu: NSMenu) {
+    @objc private func toggle() {
+        guard let button = statusItem?.button else { return }
+        if popover.isShown { popover.performClose(nil); return }
         capturedWindow = AX.isTrusted ? AX.focusedWindow() : nil
-        rebuild()
+        model.reload(window: capturedWindow)
+        let host = NSHostingController(rootView: TesseraPopover(model: model))
+        host.sizingOptions = [.preferredContentSize]   // grow and shrink with the content
+        popover.contentViewController = host
+        NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
     }
 
-    func menuDidClose(_ menu: NSMenu) {
+    func popoverDidClose(_ notification: Notification) {
+        popover.contentViewController = nil
         capturedWindow = nil
     }
 
-    private func rebuild() {
-        let config = Store.shared.config
-        let trusted = AX.isTrusted
-        menu.removeAllItems()
-
-        if !trusted {
-            let warning = NSMenuItem(title: "Attiva l'accesso Accessibilità…",
-                                     action: #selector(openAccessibility), keyEquivalent: "")
-            warning.target = self
-            menu.addItem(warning)
-            menu.addItem(.separator())
-        }
-
-        addGridItem(trusted: trusted)
-        addZones(config.zones, trusted: trusted)
-        addArrange(config.defaultStrategy, trusted: trusted)
-        addLayouts(config.layouts, trusted: trusted)
-
-        menu.addItem(.separator())
-        let preferences = NSMenuItem(title: "Preferenze…", action: #selector(openPreferences),
-                                     keyEquivalent: ",")
-        preferences.target = self
-        menu.addItem(preferences)
-        menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Esci", action: #selector(NSApplication.terminate(_:)),
-                                keyEquivalent: "q"))
-    }
-
-    private func addGridItem(trusted: Bool) {
-        let screen = NSScreen.underMouse
-        let header = capturedWindow?.appName ?? "Nessuna finestra attiva"
-        let view = MenuBarGridView(grid: Store.shared.config.grid(for: screen.tesseraKey),
-                                   screen: screen,
-                                   headerText: header,
-                                   placementEnabled: trusted && capturedWindow != nil)
-        view.onPick = { [weak self] cell in
-            self?.place(in: cell)
-            self?.menu.cancelTracking()
-        }
-        let item = NSMenuItem()
-        item.view = view
-        item.isEnabled = trusted
-        menu.addItem(item)
-    }
-
-    private func addZones(_ zones: [Zone], trusted: Bool) {
-        guard !zones.isEmpty else { return }
-        menu.addItem(.separator())
-        menu.addItem(Self.sectionHeader("Zone"))
-        for (index, zone) in zones.enumerated() {
-            let item = NSMenuItem(title: zone.name, action: #selector(placeInZone(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = index
-            item.isEnabled = trusted
-            item.attributedTitle = Self.title(zone.name,
-                                              trailing: hotkeyDescription(keyCode: zone.keyCode,
-                                                                          modifiers: zone.modifiers))
-            menu.addItem(item)
-        }
-    }
-
-    private func addArrange(_ defaultStrategy: ArrangeStrategy, trusted: Bool) {
-        menu.addItem(.separator())
-        menu.addItem(Self.sectionHeader("Sistema"))
-
-        let arrange = NSMenuItem(title: "Sistema tutto", action: #selector(arrangeDefault),
-                                 keyEquivalent: "")
-        arrange.target = self
-        arrange.isEnabled = trusted
-        menu.addItem(arrange)
-
-        let strategies = NSMenuItem(title: "Sistema tutto con…", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        for strategy in ArrangeStrategy.allCases {
-            let item = NSMenuItem(title: strategy.label, action: #selector(arrangeWith(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.representedObject = strategy.rawValue
-            item.isEnabled = trusted
-            item.state = strategy == defaultStrategy ? .on : .off
-            submenu.addItem(item)
-        }
-        strategies.submenu = submenu
-        strategies.isEnabled = trusted
-        menu.addItem(strategies)
-
-        let fit = NSMenuItem(title: "Sistema la finestra attiva nel buco più grande",
-                             action: #selector(fitFocused), keyEquivalent: "")
-        fit.target = self
-        fit.isEnabled = trusted
-        menu.addItem(fit)
-    }
-
-    private func addLayouts(_ layouts: [Layout], trusted: Bool) {
-        menu.addItem(.separator())
-        menu.addItem(Self.sectionHeader("Disposizioni"))
-        for (index, layout) in layouts.enumerated() {
-            let item = NSMenuItem(title: layout.name, action: #selector(applyLayout(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = index
-            item.isEnabled = trusted
-            item.attributedTitle = Self.title(layout.name,
-                                              trailing: hotkeyDescription(keyCode: layout.keyCode,
-                                                                          modifiers: layout.modifiers))
-            menu.addItem(item)
-        }
-        let save = NSMenuItem(title: "Salva disposizione attuale…", action: #selector(saveLayout),
-                              keyEquivalent: "")
-        save.target = self
-        save.isEnabled = trusted
-        menu.addItem(save)
-    }
-
-    private static func sectionHeader(_ text: String) -> NSMenuItem {
-        let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        item.attributedTitle = NSAttributedString(string: text, attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ])
-        return item
-    }
-
-    /// A title with the hotkey pushed to the right edge of the menu.
-    private static func title(_ text: String, trailing: String) -> NSAttributedString {
-        let font = NSFont.menuFont(ofSize: 0)
-        guard !trailing.isEmpty else {
-            return NSAttributedString(string: text, attributes: [.font: font])
-        }
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.tabStops = [NSTextTab(textAlignment: .right, location: 220)]
-        let result = NSMutableAttributedString(string: text + "\t", attributes: [
-            .font: font, .paragraphStyle: paragraph,
-        ])
-        result.append(NSAttributedString(string: trailing, attributes: [
-            .font: font,
-            .paragraphStyle: paragraph,
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ]))
-        return result
+    private func close() {
+        if popover.isShown { popover.performClose(nil) }
     }
 
     // MARK: Actions
 
-    private func place(in cell: CellRect) {
+    /// Places the captured window directly: going through `AppController.placeFocused` would
+    /// re-read the frontmost app, which by now is this popover's own.
+    func place(in cell: CellRect) {
+        defer { close() }
         guard let window = capturedWindow else { return }
-        AX.place(window, in: cell, on: AX.screen(of: window))
+        let screen = AX.screen(of: window)
+        OverlayController.shared.flash(cell: cell, on: screen)
+        AX.place(window, in: cell, on: screen)
     }
 
-    @objc private func placeInZone(_ sender: NSMenuItem) {
-        guard let index = sender.representedObject as? Int,
-              index < Store.shared.config.zones.count else { return }
-        place(in: Store.shared.config.zones[index].cell)
-    }
-
-    @objc private func arrangeDefault() {
-        AppController.shared.arrangeCurrentScreen(Store.shared.config.defaultStrategy)
-    }
-
-    @objc private func arrangeWith(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let strategy = ArrangeStrategy(rawValue: raw) else { return }
-        AppController.shared.arrangeCurrentScreen(strategy)
-    }
-
-    @objc private func fitFocused() {
+    func fitFocused() {
+        defer { close() }
         guard let window = capturedWindow else { return }
         AutoArrange.fit(window)
     }
 
-    @objc private func applyLayout(_ sender: NSMenuItem) {
-        guard let index = sender.representedObject as? Int,
-              index < Store.shared.config.layouts.count else { return }
-        AppController.shared.apply(Store.shared.config.layouts[index])
+    func arrange(with strategy: ArrangeStrategy) {
+        close()
+        AppController.shared.arrangeCurrentScreen(strategy)
     }
 
-    @objc private func saveLayout() {
+    func apply(_ layout: Layout) {
+        close()
+        AppController.shared.apply(layout)
+    }
+
+    func saveLayout() {
         // The snapshot has to be taken before the alert steals the front window.
         let layout = AppController.shared.captureLayout(named: "")
+        close()
         let alert = NSAlert()
         alert.messageText = "Salva la disposizione attuale"
         alert.informativeText = "Dai un nome alla disposizione delle finestre di adesso."
         alert.addButton(withTitle: "Salva")
         alert.addButton(withTitle: "Annulla")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
         field.placeholderString = "Nome"
         field.stringValue = "Disposizione \(Store.shared.config.layouts.count + 1)"
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
 
-        NSApp.activate(ignoringOtherApps: true)   // the only moment this accessory app takes focus
+        NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         Store.shared.mutate { $0.layouts.append(Layout(name: name, placements: layout.placements)) }
     }
 
-    @objc private func openPreferences() {
+    func openPreferences() {
+        close()
         PreferencesWindowController.shared.show()
     }
 
-    @objc private func openAccessibility() {
+    func openAccessibility() {
+        close()
         AX.openAccessibilitySettings()
     }
 }

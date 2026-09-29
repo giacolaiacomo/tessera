@@ -142,28 +142,34 @@ enum AX {
 
     /// Moves and resizes a window to a Cocoa-coordinate rect.
     ///
-    /// Order matters and one pass is not enough: an app that refuses a size until it has moved
-    /// (or clamps to its own minimum) lands somewhere else, so we set size, then position, then
-    /// re-apply whichever the app didn't honour.
+    /// Position, size, position — and up to three times. One pass is not enough because the two
+    /// attributes fight each other: growing a window near an edge makes macOS shove it back on
+    /// screen (so the position set before the size is lost), while shrinking it first can make an
+    /// app clamp to its own minimum. Setting position last is what actually gets the window where
+    /// it was asked to go; the extra passes converge on apps that resize in steps.
     @discardableResult
     static func setFrame(_ window: AXUIElement, to rect: CGRect) -> Bool {
         let target = toAX(rect)
-        for pass in 0..<2 {
-            var size = CGSize(width: target.width, height: target.height)
-            var origin = CGPoint(x: target.minX, y: target.minY)
-            if pass == 0, let sizeValue = AXValueCreate(.cgSize, &size) {
-                AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
-            }
-            if let originValue = AXValueCreate(.cgPoint, &origin) {
-                AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, originValue)
-            }
-            if let sizeValue = AXValueCreate(.cgSize, &size) {
-                AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
-            }
-            if let landed = frame(of: window),
-               abs(landed.width - rect.width) < 2, abs(landed.height - rect.height) < 2,
-               abs(landed.minX - rect.minX) < 2, abs(landed.minY - rect.minY) < 2 {
-                return true
+        var origin = CGPoint(x: target.minX, y: target.minY)
+        var size = CGSize(width: target.width, height: target.height)
+
+        func set(_ attribute: String, _ value: AXValue?) {
+            guard let value else { return }
+            AXUIElementSetAttributeValue(window, attribute as CFString, value)
+        }
+
+        for _ in 0..<3 {
+            set(kAXPositionAttribute as String, AXValueCreate(.cgPoint, &origin))
+            set(kAXSizeAttribute as String, AXValueCreate(.cgSize, &size))
+            set(kAXPositionAttribute as String, AXValueCreate(.cgPoint, &origin))
+            guard let landed = frame(of: window) else { return false }
+            // An app with a minimum size will never match exactly: accept the position and let
+            // the size be whatever the app insists on, rather than looping forever.
+            let placed = abs(landed.minX - rect.minX) < 2 && abs(landed.minY - rect.minY) < 2
+            let sized = abs(landed.width - rect.width) < 2 && abs(landed.height - rect.height) < 2
+            if placed && sized { return true }
+            if placed && landed.width >= rect.width - 2 && landed.height >= rect.height - 2 {
+                return true   // clamped to its own minimum, but in the right place
             }
         }
         return false
@@ -174,6 +180,51 @@ enum AX {
     static func place(_ window: ManagedWindow, in cell: CellRect, on screen: NSScreen) -> Bool {
         let grid = Store.shared.config.grid(for: screen.tesseraKey)
         return setFrame(window.element, to: Geometry.frame(for: cell, in: grid, on: screen.visibleFrame))
+    }
+
+    /// The on-screen window list: pid and frame of everything visible on the current Space,
+    /// frontmost first. Only pid and bounds are read, which need no Screen Recording permission
+    /// — window titles would.
+    private static func onScreenEntries() -> [(pid: pid_t, bounds: CGRect)] {
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                              kCGNullWindowID) as? [[String: Any]] ?? []
+        return info.compactMap { entry in
+            guard let pid = entry[kCGWindowOwnerPID as String] as? pid_t,
+                  let dict = entry[kCGWindowBounds as String] as? [String: CGFloat],
+                  let bounds = CGRect(dictionaryRepresentation: dict as CFDictionary)
+            else { return nil }
+            return (pid, bounds)
+        }
+    }
+
+    /// Drops the windows that are not on the current Space, so arranging one desktop never
+    /// shuffles the windows sitting on another.
+    static func onCurrentSpace(_ windows: [ManagedWindow]) -> [ManagedWindow] {
+        // Presence is judged per app, not per window: a window's AX frame and its CG bounds can
+        // disagree by a pixel mid-animation, and dropping a real window is worse than keeping one.
+        let pids = Set(onScreenEntries().map(\.pid))
+        return windows.filter { pids.contains($0.pid) }
+    }
+
+    /// Windows in front-to-back order, as CoreGraphics sees them.
+    ///
+    /// The Accessibility API exposes no z-order, so we match each window against the on-screen
+    /// window list by pid and frame.
+    static func sortedFrontToBack(_ windows: [ManagedWindow]) -> [ManagedWindow] {
+        // Index 0 is the frontmost window; anything we cannot match sinks to the back.
+        let entries = onScreenEntries()
+        func depth(of window: ManagedWindow) -> Int {
+            guard let frame = window.frame else { return entries.count }
+            let axFrame = toAX(frame)
+            let index = entries.firstIndex {
+                $0.pid == window.pid
+                    && abs($0.bounds.minX - axFrame.minX) < 3 && abs($0.bounds.minY - axFrame.minY) < 3
+            }
+            return index ?? entries.count
+        }
+        return windows.map { (window: $0, depth: depth(of: $0)) }
+            .sorted { $0.depth < $1.depth }
+            .map(\.window)
     }
 
     /// The screen a window mostly sits on.

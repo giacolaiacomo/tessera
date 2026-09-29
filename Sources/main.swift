@@ -75,19 +75,36 @@ final class AppController {
         return Layout(name: name, placements: placements)
     }
 
+    // MARK: Reacting to a new grid
+
+    private var knownGrids: [String: GridSpec] = [:]
+
+    /// Changing a grid is a request to see it: the screens whose grid just changed are re-tiled
+    /// right away, otherwise the setting only takes effect on windows placed later.
+    private func rearrangeScreensWhoseGridChanged() {
+        let grids = store.config.grids
+        defer { knownGrids = grids }
+        guard store.config.rearrangeOnGridChange else { return }
+        for (key, grid) in grids where knownGrids[key] != grid {
+            guard let screen = NSScreen.screen(forKey: key) else { continue }
+            AutoArrange.apply(AutoArrange.windows(on: screen), on: screen,
+                              strategy: store.config.defaultStrategy)
+        }
+    }
+
     // MARK: Lifecycle
 
     func start() {
         MenuBarController.shared.install()
         HotkeyManager.shared.reload()
-        DragWatcher.shared.setEnabled(store.config.showOverlayOnDrag)
         NewWindowWatcher.shared.setEnabled(store.config.autoFitNewWindows)
+        knownGrids = store.config.grids
         store.onChange = { [weak self] in
             guard let self else { return }
             HotkeyManager.shared.reload()
-            DragWatcher.shared.setEnabled(self.store.config.showOverlayOnDrag)
             NewWindowWatcher.shared.setEnabled(self.store.config.autoFitNewWindows)
             MenuBarController.shared.refresh()
+            self.rearrangeScreensWhoseGridChanged()
         }
         if !AX.isTrusted { promptForAccessibility() }
     }
@@ -109,38 +126,54 @@ final class AppController {
 
 // MARK: - Icon generation (scripts/build-app.sh calls the app with --icon)
 
-func drawIcon(to path: String, size: Int) {
-    let side = CGFloat(size)
-    let image = NSImage(size: NSSize(width: side, height: side))
-    image.lockFocus()
-    let inset = side * 0.08
-    let rect = CGRect(x: inset, y: inset, width: side - 2 * inset, height: side - 2 * inset)
-    NSColor(calibratedRed: 0.15, green: 0.17, blue: 0.22, alpha: 1).setFill()
-    NSBezierPath(roundedRect: rect, xRadius: side * 0.22, yRadius: side * 0.22).fill()
-
-    // A 2×2-with-a-split mosaic: the point of the app in one glyph.
-    let pad = side * 0.20, gap = side * 0.045
-    let area = CGRect(x: pad, y: pad, width: side - 2 * pad, height: side - 2 * pad)
-    let halfW = (area.width - gap) / 2
-    let halfH = (area.height - gap) / 2
-    let thirdH = (area.height - 2 * gap) / 3
-    let tiles = [
-        CGRect(x: area.minX, y: area.minY, width: halfW, height: area.height),
-        CGRect(x: area.minX + halfW + gap, y: area.minY + 2 * (thirdH + gap), width: halfW, height: thirdH),
-        CGRect(x: area.minX + halfW + gap, y: area.minY + thirdH + gap, width: halfW, height: thirdH),
-        CGRect(x: area.minX + halfW + gap, y: area.minY, width: halfW, height: thirdH),
-    ]
-    _ = halfH
-    NSColor.white.setFill()
-    for tile in tiles {
-        NSBezierPath(roundedRect: tile, xRadius: side * 0.05, yRadius: side * 0.05).fill()
-    }
-    image.unlockFocus()
-
+func writeIcon(to path: String, size: Int) {
+    let image = Logo.appIcon(size: CGFloat(size))
     guard let tiff = image.tiffRepresentation,
           let bitmap = NSBitmapImageRep(data: tiff),
           let png = bitmap.representation(using: .png, properties: [:]) else { return }
     try? png.write(to: URL(fileURLWithPath: path))
+}
+
+// MARK: - Diagnostics (Tessera.app/Contents/MacOS/Tessera --diagnose)
+
+/// Prints what Tessera sees and what "arrange all" would do, without moving a single window.
+/// Run it from the installed app so it inherits the Accessibility permission of that bundle.
+func printDiagnostics() {
+    let config = Store.shared.config
+    print("Tessera \(appVersion) — diagnostica (nessuna finestra viene spostata)")
+    print("Accesso Accessibilità: \(AX.isTrusted ? "attivo" : "NON attivo — autorizza l'app e riprova")")
+    print("Strategia predefinita: \(config.defaultStrategy.label)\n")
+
+    for screen in NSScreen.screens {
+        let key = screen.tesseraKey
+        let grid = config.grid(for: key)
+        let windows = AutoArrange.windows(on: screen)
+        let plan = AutoArrange.plan(on: screen)
+        print("Schermo \(screen.localizedName) [\(key)]")
+        print("  visibleFrame: \(short(screen.visibleFrame))")
+        print("  griglia: \(grid.cols)×\(grid.rows), gap esterno \(Int(grid.outerGap)) interno \(Int(grid.innerGap))"
+              + (config.grids[key] == nil ? " (predefinita, mai modificata per questo schermo)" : ""))
+        print("  finestre su questa Scrivania: \(windows.count) — ne sistemerebbe \(plan.tiled), ne lascia \(plan.untouched)")
+
+        let ordered = AX.sortedFrontToBack(windows).prefix(grid.cols * grid.rows).sorted { a, b in
+            let fa = a.frame ?? .zero, fb = b.frame ?? .zero
+            return fa.minX == fb.minX ? fa.maxY > fb.maxY : fa.minX < fb.minX
+        }
+        let cells = AutoArrange.partition(count: ordered.count, grid: grid,
+                                          screenAspect: screen.visibleFrame.width / screen.visibleFrame.height,
+                                          strategy: config.defaultStrategy,
+                                          masterFraction: config.masterFraction)
+        for (window, cell) in zip(ordered, cells) {
+            let target = Geometry.frame(for: cell, in: grid, on: screen.visibleFrame)
+            print("    \(window.appName) — \(short(window.frame ?? .zero))"
+                  + " → cella col \(cell.col) riga \(cell.row) \(cell.w)×\(cell.h) = \(short(target))")
+        }
+        print("")
+    }
+}
+
+private func short(_ rect: CGRect) -> String {
+    "\(Int(rect.minX)),\(Int(rect.minY)) \(Int(rect.width))×\(Int(rect.height))"
 }
 
 // MARK: - Entry point
@@ -153,7 +186,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 let arguments = CommandLine.arguments
 if let index = arguments.firstIndex(of: "--icon"), arguments.count > index + 2 {
-    drawIcon(to: arguments[index + 1], size: Int(arguments[index + 2]) ?? 512)
+    writeIcon(to: arguments[index + 1], size: Int(arguments[index + 2]) ?? 512)
+    exit(0)
+}
+
+if arguments.contains("--diagnose") {
+    printDiagnostics()
     exit(0)
 }
 

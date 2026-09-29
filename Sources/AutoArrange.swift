@@ -9,6 +9,7 @@ import AppKit
 
 enum ArrangeStrategy: String, Codable, CaseIterable {
     case balanced      // as square as the screen allows
+    case cells         // the grid taken literally: one cell per window, empty cells stay empty
     case columns       // one column each
     case rows          // one row each
     case masterStack   // first window large on the left, the rest stacked on the right
@@ -16,9 +17,20 @@ enum ArrangeStrategy: String, Codable, CaseIterable {
     var label: String {
         switch self {
         case .balanced:    return "Bilanciata"
+        case .cells:       return "Una per cella"
         case .columns:     return "Colonne"
         case .rows:        return "Righe"
         case .masterStack: return "Master + pila"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .balanced:    return "Riempie lo schermo dividendolo in riquadri il più quadrati possibile."
+        case .cells:       return "Una finestra per cella della griglia, nell'ordine di lettura: con 3×2 ogni finestra è un sesto di schermo, anche se le finestre sono meno di sei."
+        case .columns:     return "Una colonna a testa, alte quanto lo schermo."
+        case .rows:        return "Una riga a testa, larghe quanto lo schermo."
+        case .masterStack: return "La finestra in primo piano grande a sinistra, le altre in pila a destra."
         }
     }
 }
@@ -67,7 +79,9 @@ enum AutoArrange {
         guard n > 0 else { return [] }
         let g = grid.clamped()
         let capacity = g.cols * g.rows
-        guard n > 1 else { return [CellRect(col: 0, row: 0, w: g.cols, h: g.rows)] }
+        // A lone window fills the screen — except under `.cells`, where the grid is taken at
+        // face value and one window means one cell.
+        if n == 1, strategy != .cells { return [CellRect(col: 0, row: 0, w: g.cols, h: g.rows)] }
         guard n <= capacity else {
             let head = partition(count: capacity, grid: g, screenAspect: aspect, strategy: strategy,
                                  masterFraction: masterFraction)
@@ -75,6 +89,10 @@ enum AutoArrange {
         }
 
         switch strategy {
+        case .cells:
+            // The grid at face value: fill it in reading order and leave the rest empty.
+            return (0..<n).map { CellRect(col: $0 % g.cols, row: $0 / g.cols) }
+
         case .columns:
             // One column each — unless there are more windows than columns, in which case a
             // single strip per window would be unusable and the balanced grid is the honest answer.
@@ -137,13 +155,19 @@ enum AutoArrange {
     // MARK: Applying
 
     /// Arranges the given windows on one screen. Returns how many actually moved.
+    ///
+    /// The grid is a promise about sizes: a 3×2 means six tiles, not "as many slivers as there
+    /// are windows". So only the frontmost `cols × rows` windows are tiled and everything
+    /// further back is left exactly where it is.
     @discardableResult
     static func apply(_ windows: [ManagedWindow], on screen: NSScreen,
                       strategy: ArrangeStrategy) -> Int {
         let grid = Store.shared.config.grid(for: screen.tesseraKey)
         let aspect = screen.visibleFrame.width / screen.visibleFrame.height
-        // Left-to-right, top-to-bottom: keep the arrangement close to where things already were.
-        let ordered = windows.sorted { a, b in
+        let chosen = AX.sortedFrontToBack(windows).prefix(grid.cols * grid.rows)
+        // Left-to-right, top-to-bottom: keep the arrangement close to where things already were,
+        // so windows travel the shortest distance to their tile.
+        let ordered = chosen.sorted { a, b in
             let fa = a.frame ?? .zero, fb = b.frame ?? .zero
             return fa.minX == fb.minX ? fa.maxY > fb.maxY : fa.minX < fb.minX
         }
@@ -155,11 +179,21 @@ enum AutoArrange {
         return moved
     }
 
-    /// Every placeable window currently on this screen.
+    /// How many windows "arrange all" would move on this screen, and how many it would leave alone.
+    static func plan(on screen: NSScreen) -> (tiled: Int, untouched: Int) {
+        let grid = Store.shared.config.grid(for: screen.tesseraKey)
+        let total = windows(on: screen).count
+        let tiled = min(total, grid.cols * grid.rows)
+        return (tiled, total - tiled)
+    }
+
+    /// Every placeable window currently on this screen and on this Space.
     static func windows(on screen: NSScreen) -> [ManagedWindow] {
-        AX.allWindows().filter { window in
-            guard let frame = window.frame else { return false }
-            return screen.frame.intersection(frame).width > 1 && AX.screen(of: window) === screen
+        let key = screen.tesseraKey
+        return AX.onCurrentSpace(AX.allWindows()).filter { window in
+            guard let frame = window.frame, frame.width > 1, frame.height > 1 else { return false }
+            // Compare by screen key, not object identity: NSScreen hands out fresh instances.
+            return AX.screen(of: window).tesseraKey == key
         }
     }
 
