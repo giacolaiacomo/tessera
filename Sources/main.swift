@@ -92,6 +92,42 @@ final class AppController {
         }
     }
 
+    // MARK: Permission
+
+    private var trustWatcher: Timer?
+
+    /// Polls until Accessibility access is granted, then wires everything up. Without this the
+    /// app has to be restarted after ticking the box, which is a silly thing to ask.
+    private func watchForTrust() {
+        guard trustWatcher == nil else { return }
+        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] timer in
+            guard AX.isTrusted else { return }
+            timer.invalidate()
+            self?.trustWatcher = nil
+            HotkeyManager.shared.reload()
+            MenuBarController.shared.refresh()
+            self?.writeState()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        trustWatcher = timer
+    }
+
+    /// A tiny status file, so the app's real state can be read from a terminal (`--diagnose`
+    /// runs as a different process and cannot answer for the running app).
+    func writeState() {
+        let state: [String: Any] = [
+            "version": appVersion,
+            "pid": ProcessInfo.processInfo.processIdentifier,
+            "accessibilityTrusted": AX.isTrusted,
+            "updated": ISO8601DateFormatter().string(from: Date()),
+        ]
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Tessera", isDirectory: true)
+        guard let data = try? JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted])
+        else { return }
+        try? data.write(to: dir.appendingPathComponent("state.json"), options: .atomic)
+    }
+
     // MARK: Lifecycle
 
     func start() {
@@ -106,7 +142,11 @@ final class AppController {
             MenuBarController.shared.refresh()
             self.rearrangeScreensWhoseGridChanged()
         }
-        if !AX.isTrusted { promptForAccessibility() }
+        writeState()
+        if !AX.isTrusted {
+            promptForAccessibility()
+            watchForTrust()
+        }
     }
 
     private func promptForAccessibility() {
@@ -115,8 +155,8 @@ final class AppController {
         alert.messageText = "Tessera ha bisogno dell'accesso Accessibilità"
         alert.informativeText = """
             Per spostare e ridimensionare le finestre delle altre app, Tessera va autorizzata in \
-            Impostazioni di Sistema › Privacy e sicurezza › Accessibilità. Dopo averla attivata, \
-            riavvia Tessera.
+            Impostazioni di Sistema › Privacy e sicurezza › Accessibilità. Appena spunti la \
+            casella funziona: non serve riavviarla.
             """
         alert.addButton(withTitle: "Apri Impostazioni")
         alert.addButton(withTitle: "Più tardi")

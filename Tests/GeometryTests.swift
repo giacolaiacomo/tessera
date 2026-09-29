@@ -91,5 +91,35 @@ check(AutoArrange.largestRect(free: occupied, cols: 6, rows: 4) == CellRect(col:
 for r in 0..<4 { for c in 0..<6 { occupied[r][c] = true } }
 check(AutoArrange.largestRect(free: occupied, cols: 6, rows: 4) == nil, "full grid -> nil")
 
+// 6. A config written by another version still loads: unknown keys are ignored and missing
+//    ones fall back, because throwing here would silently reset someone's grids.
+let legacyJSON = """
+{
+  "grids": { "display-2": { "cols": 3, "rows": 2, "outerGap": 8, "innerGap": 8 } },
+  "zones": [], "layouts": [],
+  "showOverlayOnDrag": true, "overlayModifierOnly": false,
+  "launchAtLogin": false, "autoFitNewWindows": false,
+  "defaultStrategy": "balanced", "masterFraction": 0.6
+}
+""".data(using: .utf8)!
+if let config = try? JSONDecoder().decode(Config.self, from: legacyJSON) {
+    check(config.grid(for: "display-2") == GridSpec(cols: 3, rows: 2, outerGap: 8, innerGap: 8),
+          "legacy config keeps its grid: \(config.grid(for: "display-2"))")
+    check(config.rearrangeOnGridChange, "missing field falls back to its default")
+} else {
+    check(false, "legacy config failed to decode")
+}
+// The other direction: a file from a future version, with a key this build knows nothing about.
+let futureJSON = """
+{ "grids": { "display-9": { "cols": 4, "rows": 3, "outerGap": 0, "innerGap": 0 } },
+  "somethingNew": 42, "defaultStrategy": "cells" }
+""".data(using: .utf8)!
+if let config = try? JSONDecoder().decode(Config.self, from: futureJSON) {
+    check(config.grid(for: "display-9").cols == 4, "future config keeps its grid")
+    check(config.defaultStrategy == .cells, "future config keeps its strategy")
+} else {
+    check(false, "future config failed to decode")
+}
+
 print(failures == 0 ? "ALL GEOMETRY CHECKS PASSED" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

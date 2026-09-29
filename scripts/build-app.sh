@@ -35,5 +35,17 @@ cat > "$APP/Contents/Info.plist" <<PL
   <key>LSUIElement</key><true/>
 </dict></plist>
 PL
-codesign --force --sign - "$APP" 2>/dev/null || true   # ad-hoc signature, local use only
+# Sign with a stable identity when one exists. This is what makes the Accessibility permission
+# survive a rebuild: macOS keys the grant to the signature, and an ad-hoc one changes every time
+# the binary does, so the app silently stops being the app that was authorised.
+IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+  | grep -m1 "Apple Development" | sed -E 's/.*\) ([0-9A-F]+) ".*/\1/')
+if [ -n "$IDENTITY" ]; then
+  codesign --force --sign "$IDENTITY" "$APP" >/dev/null 2>&1 \
+    && echo "  firmata con l'identità Apple Development $IDENTITY" \
+    || { codesign --force --sign - "$APP" 2>/dev/null; echo "  firma stabile fallita, ad-hoc"; }
+else
+  codesign --force --sign - "$APP" 2>/dev/null || true   # ad-hoc: local use only
+  echo "  firmata ad-hoc: l'autorizzazione Accessibilità andrà ridata dopo ogni build"
+fi
 echo "✓ $APP ($VERSION)"

@@ -20,6 +20,22 @@ struct GridSpec: Codable, Equatable {
 
     static let `default` = GridSpec()
 
+    init(cols: Int = 12, rows: Int = 8, outerGap: CGFloat = 8, innerGap: CGFloat = 8) {
+        self.cols = cols
+        self.rows = rows
+        self.outerGap = outerGap
+        self.innerGap = innerGap
+    }
+
+    /// Same leniency as `Config`: a missing field falls back instead of losing the grid.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        cols = (try? container.decodeIfPresent(Int.self, forKey: .cols)).flatMap { $0 } ?? 12
+        rows = (try? container.decodeIfPresent(Int.self, forKey: .rows)).flatMap { $0 } ?? 8
+        outerGap = (try? container.decodeIfPresent(CGFloat.self, forKey: .outerGap)).flatMap { $0 } ?? 8
+        innerGap = (try? container.decodeIfPresent(CGFloat.self, forKey: .innerGap)).flatMap { $0 } ?? 8
+    }
+
     func clamped() -> GridSpec {
         GridSpec(cols: max(1, min(cols, 32)), rows: max(1, min(rows, 32)),
                  outerGap: max(0, min(outerGap, 80)), innerGap: max(0, min(innerGap, 80)))
@@ -134,6 +150,28 @@ struct Config: Codable {
     func grid(for screenKey: String) -> GridSpec {
         (grids[screenKey] ?? .default).clamped()
     }
+
+    init() {}
+
+    /// Decoded field by field, each falling back to its default.
+    ///
+    /// The synthesised decoder would throw on the first key a newer version added, and a throw
+    /// here means the whole file is discarded — silently turning someone's grids back into the
+    /// defaults. Adding a field must never cost a user their configuration.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            (try? container.decodeIfPresent(T.self, forKey: key)) .flatMap { $0 } ?? fallback
+        }
+        grids = value(.grids, [:])
+        zones = value(.zones, [])
+        layouts = value(.layouts, [])
+        launchAtLogin = value(.launchAtLogin, false)
+        rearrangeOnGridChange = value(.rearrangeOnGridChange, true)
+        autoFitNewWindows = value(.autoFitNewWindows, false)
+        defaultStrategy = value(.defaultStrategy, .balanced)
+        masterFraction = value(.masterFraction, 0.6)
+    }
 }
 
 /// Reads and writes ~/Library/Application Support/Tessera/config.json.
@@ -154,9 +192,13 @@ final class Store {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode(Config.self, from: data) else { return }
-        config = decoded
+        guard let data = try? Data(contentsOf: url) else { return }
+        do {
+            config = try JSONDecoder().decode(Config.self, from: data)
+        } catch {
+            NSLog("Tessera: configurazione illeggibile (%@), riparto dai valori predefiniti: %@",
+                  url.path, String(describing: error))
+        }
     }
 
     func mutate(_ body: (inout Config) -> Void) {
