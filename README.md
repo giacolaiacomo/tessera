@@ -9,7 +9,9 @@ Una piccola app nella barra dei menu di macOS per disporre le finestre su una **
   righe, master + pila). Una griglia 3×2 vuol dire sei riquadri: sistema le sei finestre in primo
   piano e lascia le altre dove sono. Cambi la griglia e lo schermo si ridispone all'istante.
 - **Hotkey**: assegni una combinazione a una zona (un rettangolo di celle) e la finestra attiva ci va.
-- **Griglia nel menu**: clic sull'icona, clic sulla cella (o trascini su più celle).
+- **Griglia nel menu**: clic sull'icona e vedi dove sono le finestre adesso, ognuna col nome
+  dell'app; clic su una cella (o trascinamento su più celle) per piazzare quella attiva.
+  Le impostazioni sono una pagina dello stesso popover, non una finestra a parte.
 - **Disposizioni salvate**: "Dev", "Call", "Ricerca" — tutte le finestre al loro posto in un colpo.
 - **Auto-fit**: se vuoi, ogni finestra nuova finisce da sola nell'area libera più grande.
 

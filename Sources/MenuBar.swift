@@ -1,28 +1,45 @@
-// Tessera — the status item and its popover: the grid you can click, the zones, the automatic
-// arrangements and the saved layouts.
+// Tessera — the status item and the one panel the whole app lives in.
 //
-// The popover is a SwiftUI view built when it opens and dropped when it closes: everything it
-// shows depends on where the mouse is and on which window is in front at that instant, so there
-// is nothing worth keeping alive in between.
+// There is no settings window: the popover has pages (home, settings, zones) and a chevron in
+// the header to come back, so nothing ever opens behind the popover or outlives it. The SwiftUI
+// tree is built when the popover opens and dropped when it closes: everything it shows depends
+// on where the mouse is and on which window is in front at that instant.
 
 import AppKit
 import SwiftUI
+
+// MARK: - Pages
+
+enum PopoverPage {
+    case home
+    case settings
+    case zones
+}
 
 // MARK: - What the popover shows
 
 /// A snapshot of the state the popover draws, taken when it opens and whenever the config changes.
 final class PopoverModel: ObservableObject {
+    @Published var page = PopoverPage.home
     @Published fileprivate(set) var trusted = false
     @Published fileprivate(set) var appName: String?
+    @Published fileprivate(set) var screenName = ""
     @Published fileprivate(set) var grid = GridSpec.default
     @Published fileprivate(set) var screenAspect: CGFloat = 1.6
+    @Published fileprivate(set) var occupants: [AutoArrange.Occupant] = []
     @Published fileprivate(set) var tiled = 0
     @Published fileprivate(set) var untouched = 0
     @Published fileprivate(set) var zones: [Zone] = []
     @Published fileprivate(set) var layouts: [Layout] = []
     @Published fileprivate(set) var strategy = ArrangeStrategy.balanced
 
+    /// How tall a settings page may grow before it scrolls. The render script raises it to
+    /// capture a whole page in one image; nothing else touches it.
+    var pageMaxHeight: CGFloat = 380
+
     var canPlace: Bool { trusted && appName != nil }
+    var windowCount: Int { occupants.count }
+    var resistant: Int { occupants.filter(\.resistant).count }
 
     func reload(window: ManagedWindow?) {
         let config = Store.shared.config
@@ -30,8 +47,10 @@ final class PopoverModel: ObservableObject {
         let frame = screen.visibleFrame
         trusted = AX.isTrusted
         appName = window?.appName
+        screenName = screen.localizedName
         grid = config.grid(for: screen.tesseraKey)
         screenAspect = frame.height > 0 ? frame.width / frame.height : 1.6
+        occupants = trusted ? AutoArrange.occupancy(on: screen) : []
         let plan = trusted ? AutoArrange.plan(on: screen) : (tiled: 0, untouched: 0)
         tiled = plan.tiled
         untouched = plan.untouched
@@ -41,13 +60,37 @@ final class PopoverModel: ObservableObject {
     }
 }
 
+extension PopoverModel {
+    /// Made-up state for scripts/render-ui.sh, which runs without Accessibility access and so
+    /// would otherwise only ever picture the empty, disabled popover.
+    func loadDemo() {
+        trusted = true
+        appName = "Safari"
+        screenName = "Acer X34 P"
+        grid = GridSpec(cols: 3, rows: 2)
+        screenAspect = 21.0 / 9.0
+        occupants = [
+            AutoArrange.Occupant(appName: "Safari", cell: CellRect(col: 0, row: 0), isFocused: true, resistant: false),
+            AutoArrange.Occupant(appName: "Xcode", cell: CellRect(col: 1, row: 0, w: 1, h: 2), isFocused: false, resistant: false),
+            AutoArrange.Occupant(appName: "Note", cell: CellRect(col: 0, row: 1), isFocused: false, resistant: false),
+            AutoArrange.Occupant(appName: "Anteprima", cell: CellRect(col: 2, row: 0, w: 1, h: 2), isFocused: false, resistant: true),
+        ]
+        tiled = 4
+        untouched = 1
+        zones = [Zone(name: "Sinistra", cell: CellRect(col: 0, row: 0, w: 1, h: 2), keyCode: 123, modifiers: 6400)]
+        layouts = [Layout(name: "Sviluppo", placements: [])]
+    }
+}
+
 // MARK: - The clickable grid
 
-/// A miniature of the screen's grid: click a cell or drag over several to pick an area.
+/// A live miniature of the screen: the windows that are on it now, drawn on the grid they sit
+/// on, and a click or a drag to send the active one anywhere.
 /// Row 0 is the top row, exactly as in `CellRect`, which is also SwiftUI's y direction.
 struct GridPicker: View {
     let grid: GridSpec
     let screenAspect: CGFloat
+    var occupants: [AutoArrange.Occupant] = []
     var selected: CellRect?
     var enabled = true
     let onPick: (CellRect) -> Void
@@ -74,8 +117,12 @@ struct GridPicker: View {
                 let rect = CGRect(x: CGFloat(col) * cellW, y: CGFloat(row) * cellH,
                                   width: cellW, height: cellH).insetBy(dx: inset, dy: inset)
                 context.fill(Path(roundedRect: rect, cornerRadius: 2),
-                             with: .color(.primary.opacity(0.12)))
+                             with: .color(.primary.opacity(0.10)))
             }
+        }
+        // Back to front, so the active window ends up on top of whatever it overlaps.
+        for occupant in occupants.reversed() {
+            draw(occupant, in: context, cellW: cellW, cellH: cellH, inset: inset)
         }
         guard let shown = highlight ?? selected else { return }
         let cell = shown.clamped(to: g)
@@ -84,6 +131,35 @@ struct GridPicker: View {
             .insetBy(dx: inset, dy: inset)
         context.fill(Path(roundedRect: rect, cornerRadius: 3),
                      with: .color(.accentColor.opacity(enabled ? 0.85 : 0.35)))
+    }
+
+    /// One window's tile: the active one in the accent colour, the ones a layout cannot place
+    /// exactly (full screen, or a minimum size larger than the cell) hollow and dashed.
+    private func draw(_ occupant: AutoArrange.Occupant, in context: GraphicsContext,
+                      cellW: CGFloat, cellH: CGFloat, inset: CGFloat) {
+        let cell = occupant.cell.clamped(to: grid.clamped())
+        let rect = CGRect(x: CGFloat(cell.col) * cellW, y: CGFloat(cell.row) * cellH,
+                          width: CGFloat(cell.w) * cellW, height: CGFloat(cell.h) * cellH)
+            .insetBy(dx: inset, dy: inset)
+        guard rect.width > 3, rect.height > 3 else { return }
+        let shape = Path(roundedRect: rect, cornerRadius: 3)
+        if occupant.resistant {
+            context.fill(shape, with: .color(.primary.opacity(0.06)))
+            context.stroke(shape, with: .color(.primary.opacity(0.4)),
+                           style: StrokeStyle(lineWidth: 1, dash: [2.5, 2]))
+        } else if occupant.isFocused {
+            context.fill(shape, with: .color(.accentColor.opacity(0.85)))
+        } else {
+            context.fill(shape, with: .color(.primary.opacity(0.28)))
+        }
+        guard rect.height > 11 else { return }
+        let initial = String(occupant.appName.prefix(1))
+        let fits = rect.width > CGFloat(occupant.appName.count) * 5.4 + 6
+        let label = fits ? occupant.appName : initial
+        guard rect.width > 9 else { return }
+        let color: Color = occupant.isFocused ? .white : .primary.opacity(0.75)
+        context.draw(Text(label).font(.system(size: 9, weight: .medium)).foregroundColor(color),
+                     at: CGPoint(x: rect.midX, y: rect.midY))
     }
 
     private func drag(in size: CGSize) -> some Gesture {
@@ -112,11 +188,12 @@ struct GridPicker: View {
 
 // MARK: - Rows
 
-/// One tappable line of the popover: a label, an optional shortcut pushed to the right.
+/// One tappable line: a label, an optional value or shortcut on the right, a note underneath.
 struct PopoverRow: View {
     let title: String
     var trailing: String = ""
     var note: String?
+    var chevron = false
     var enabled = true
     let action: () -> Void
 
@@ -128,6 +205,10 @@ struct PopoverRow: View {
                     Spacer(minLength: 6)
                     if !trailing.isEmpty {
                         Text(trailing).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    if chevron {
+                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
                     }
                 }
                 if let note {
@@ -143,88 +224,205 @@ struct PopoverRow: View {
     }
 }
 
+/// The title line inside a card: a name, an optional badge, an optional trailing note.
+struct CardHeader: View {
+    let title: String
+    var badge: String?
+    var trailing: String?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(title).font(.system(size: 13, weight: .semibold))
+            if let badge {
+                Text(badge).font(.system(size: 10, weight: .semibold))
+                    .padding(.horizontal, 5).padding(.vertical, 1.5)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+                    .foregroundStyle(Color.accentColor)
+            }
+            Spacer(minLength: 6)
+            if let trailing {
+                Text(trailing).font(.system(size: 10.5)).foregroundStyle(.tertiary).lineLimit(1)
+            }
+        }
+    }
+}
+
 // MARK: - The popover
 
 struct TesseraPopover: View {
     @ObservedObject var model: PopoverModel
+    @ObservedObject var prefs: PrefsModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
-            if !model.trusted { warning }
-            gridSection
-            arrangeSection
-            if !model.zones.isEmpty { zonesSection }
-            layoutsSection
+            switch model.page {
+            case .home: home
+            case .settings: SettingsPage(model: prefs, popover: model, maxHeight: model.pageMaxHeight)
+            case .zones: ZonesPage(model: prefs, maxHeight: model.pageMaxHeight)
+            }
             Divider()
             footer
         }
-        .padding(12)
+        .padding(14)
         .frame(width: 272)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    // MARK: Header and footer
+
+    private var title: String {
+        switch model.page {
+        case .home: return "Tessera"
+        case .settings: return "Impostazioni"
+        case .zones: return "Zone"
+        }
+    }
+
     private var header: some View {
         HStack(spacing: 8) {
-            Text("Tessera").font(.system(size: 13, weight: .bold))
-            Spacer()
-            Button { MenuBarController.shared.openPreferences() } label: {
-                Image(systemName: "gearshape")
+            if model.page != .home {
+                Button { model.page = model.page == .zones ? .settings : .home } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(.borderless)
             }
-            .buttonStyle(.borderless)
-            .help("Impostazioni")
+            Text(title).font(.system(size: 14, weight: .bold))
+            Spacer()
+            if model.page == .home {
+                Button { model.page = .settings } label: { Image(systemName: "gearshape") }
+                    .buttonStyle(.borderless)
+                    .help("Impostazioni")
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "square.grid.2x2").font(.system(size: 9))
+            Text("Tessera \(appVersion)").font(.system(size: 10.5))
+            Spacer()
+            Button("Esci") { NSApp.terminate(nil) }.buttonStyle(.borderless).font(.system(size: 11))
+        }
+        .foregroundStyle(.tertiary)
+    }
+
+    // MARK: Home
+
+    private var home: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !model.trusted { warning }
+            gridCard
+            arrangeCard
+            if !model.zones.isEmpty { zonesCard }
+            layoutsCard
         }
     }
 
     private var warning: some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-            Text("Senza l'accesso Accessibilità le finestre non si muovono.")
-                .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+            Text("Manca l'accesso Accessibilità.")
+                .font(.system(size: 11.5, weight: .medium)).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
             Button("Apri") { MenuBarController.shared.openAccessibility() }.controlSize(.small)
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.orange.opacity(0.12)))
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.orange.opacity(0.12)))
     }
 
-    private var gridSection: some View {
-        TesseraCard(title: "Griglia \(model.grid.cols)×\(model.grid.rows)") {
-            Text(model.appName ?? "Nessuna finestra attiva")
-                .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
-            GridPicker(grid: model.grid, screenAspect: model.screenAspect, enabled: model.canPlace) { cell in
+    private var gridCard: some View {
+        TesseraCard {
+            HStack(spacing: 5) {
+                Text(model.screenName.isEmpty ? "Schermo" : model.screenName)
+                    .font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Text("·").foregroundStyle(.tertiary)
+                Text("\(model.grid.cols)×\(model.grid.rows)")
+                    .font(.system(size: 11, weight: .medium, design: .rounded)).monospacedDigit()
+                    .foregroundStyle(Color.accentColor)
+                Spacer(minLength: 4)
+                Text(windowCount(model.windowCount))
+                    .font(.system(size: 11, design: .rounded)).monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            if let line = statusNote {
+                Text(line).font(.system(size: 10.5)).foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            GridPicker(grid: model.grid, screenAspect: model.screenAspect,
+                       occupants: model.occupants, enabled: model.canPlace) { cell in
                 MenuBarController.shared.place(in: cell)
             }
-            .frame(height: 118)
+            .frame(height: 96)
             .frame(maxWidth: .infinity)
+            Text(mapNote)
+                .font(.system(size: 10.5)).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    private var arrangeSection: some View {
-        TesseraCard(title: "Sistema") {
-            PopoverRow(title: "Sistema tutto (\(windowCount(model.tiled)))",
-                       note: untouchedNote, enabled: model.trusted) {
-                MenuBarController.shared.arrange(with: model.strategy)
-            }
-            Menu {
-                ForEach(ArrangeStrategy.allCases, id: \.self) { strategy in
-                    Button(strategy.label) { MenuBarController.shared.arrange(with: strategy) }
+    /// The windows that will not end up exactly where a layout puts them, said once, quietly.
+    /// What stays out of the grid for lack of cells belongs to the arrange button, not here.
+    private var statusNote: String? {
+        guard model.resistant > 0 else { return nil }
+        return model.resistant == 1
+            ? "1 tratteggiata non si piazza esatta"
+            : "\(model.resistant) tratteggiate non si piazzano esatte"
+    }
+
+    private var mapNote: String {
+        if !model.trusted { return "Serve l'accesso Accessibilità per vedere le finestre." }
+        return model.canPlace
+            ? "Clic o trascina per piazzare \(model.appName ?? "")."
+            : "Porta davanti una finestra per poterla piazzare."
+    }
+
+    private var arrangeCard: some View {
+        TesseraCard {
+            HStack(spacing: 6) {
+                Button { MenuBarController.shared.arrange(with: model.strategy) } label: {
+                    Text("Sistema tutto").font(.system(size: 12, weight: .medium))
+                        .frame(maxWidth: .infinity)
                 }
-            } label: {
-                // The font has to live on the label: a Menu ignores it from the outside.
-                Text("Sistema tutto con…").font(.system(size: 12))
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(!model.trusted)
+                Menu {
+                    ForEach(ArrangeStrategy.allCases, id: \.self) { strategy in
+                        Button(strategy.label) { MenuBarController.shared.arrange(with: strategy) }
+                    }
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Sistema tutto con un'altra strategia")
+                .disabled(!model.trusted)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .disabled(!model.trusted)
+            Text(arrangeNote)
+                .font(.system(size: 10.5)).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Divider()
             PopoverRow(title: "Sistema la finestra attiva", enabled: model.canPlace) {
                 MenuBarController.shared.fitFocused()
             }
         }
     }
 
-    private var zonesSection: some View {
-        TesseraCard(title: "Zone") {
+    private var arrangeNote: String {
+        let head = "\(model.strategy.label) · \(windowCount(model.tiled))"
+        guard model.untouched > 0 else { return head }
+        return head + (model.untouched == 1
+                       ? " · 1 resta dov'è"
+                       : " · \(model.untouched) restano dove sono")
+    }
+
+    private var zonesCard: some View {
+        TesseraCard {
+            CardHeader(title: "Zone")
             ForEach(model.zones) { zone in
                 PopoverRow(title: zone.name,
                            trailing: hotkeyDescription(keyCode: zone.keyCode, modifiers: zone.modifiers),
@@ -235,8 +433,14 @@ struct TesseraPopover: View {
         }
     }
 
-    private var layoutsSection: some View {
-        TesseraCard(title: "Disposizioni") {
+    private var layoutsCard: some View {
+        TesseraCard {
+            CardHeader(title: "Disposizioni")
+            if model.layouts.isEmpty {
+                Text("Nessuna disposizione salvata.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ForEach(model.layouts) { layout in
                 PopoverRow(title: layout.name,
                            trailing: hotkeyDescription(keyCode: layout.keyCode, modifiers: layout.modifiers),
@@ -244,29 +448,14 @@ struct TesseraPopover: View {
                     MenuBarController.shared.apply(layout)
                 }
             }
-            PopoverRow(title: "Salva disposizione attuale…", enabled: model.trusted) {
-                MenuBarController.shared.saveLayout()
-            }
-        }
-    }
-
-    private var footer: some View {
-        HStack {
-            Text("Tessera \(appVersion)").font(.system(size: 10.5)).foregroundStyle(.tertiary)
-            Spacer()
-            Button("Esci") { NSApp.terminate(nil) }.buttonStyle(.borderless).font(.system(size: 11))
+            Button("Salva disposizione attuale…") { MenuBarController.shared.saveLayout() }
+                .controlSize(.small)
+                .disabled(!model.trusted)
         }
     }
 
     private func windowCount(_ n: Int) -> String {
         n == 1 ? "1 finestra" : "\(n) finestre"
-    }
-
-    private var untouchedNote: String? {
-        guard model.untouched > 0 else { return nil }
-        return model.untouched == 1
-            ? "1 finestra resta dov'è"
-            : "\(model.untouched) finestre restano dove sono"
     }
 }
 
@@ -279,17 +468,20 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private let model = PopoverModel()
+    private let prefs = PrefsModel()
 
     /// The window that was focused just before the popover took over. Read before showing it —
     /// afterwards the popover is frontmost and `AX.focusedWindow()` answers with the wrong thing.
     private var capturedWindow: ManagedWindow?
+
+    var isPopoverShown: Bool { popover.isShown }
 
     func install() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = Logo.statusItemIcon()
         item.button?.toolTip = "Tessera"
         item.button?.target = self
-        item.button?.action = #selector(toggle)
+        item.button?.action = #selector(statusItemClicked)
         statusItem = item
         popover.behavior = .transient
         popover.delegate = self
@@ -299,14 +491,25 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     func refresh() {
         guard popover.isShown else { return }
         model.reload(window: capturedWindow)
+        prefs.reload()
     }
 
-    @objc private func toggle() {
+    @objc private func statusItemClicked() {
+        togglePopover(page: .home)
+    }
+
+    /// Shows the popover on `page`, or closes it when that page is already the one on screen.
+    func togglePopover(page: PopoverPage) {
         guard let button = statusItem?.button else { return }
-        if popover.isShown { popover.performClose(nil); return }
+        if popover.isShown {
+            if model.page == page { closePopover() } else { model.page = page }
+            return
+        }
         capturedWindow = AX.isTrusted ? AX.focusedWindow() : nil
         model.reload(window: capturedWindow)
-        let host = NSHostingController(rootView: TesseraPopover(model: model))
+        prefs.reload()
+        model.page = page
+        let host = NSHostingController(rootView: TesseraPopover(model: model, prefs: prefs))
         host.sizingOptions = [.preferredContentSize]   // grow and shrink with the content
         popover.contentViewController = host
         NSApp.activate(ignoringOtherApps: true)
@@ -314,13 +517,14 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         popover.contentViewController?.view.window?.makeKey()
     }
 
+    func closePopover() {
+        if popover.isShown { popover.performClose(nil) }
+    }
+
     func popoverDidClose(_ notification: Notification) {
         popover.contentViewController = nil
         capturedWindow = nil
-    }
-
-    private func close() {
-        if popover.isShown { popover.performClose(nil) }
+        model.page = .home
     }
 
     // MARK: Actions
@@ -328,7 +532,7 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     /// Places the captured window directly: going through `AppController.placeFocused` would
     /// re-read the frontmost app, which by now is this popover's own.
     func place(in cell: CellRect) {
-        defer { close() }
+        defer { closePopover() }
         guard let window = capturedWindow else { return }
         let screen = AX.screen(of: window)
         OverlayController.shared.flash(cell: cell, on: screen)
@@ -337,7 +541,7 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     }
 
     func fitFocused() {
-        defer { close() }
+        defer { closePopover() }
         guard let window = capturedWindow else { return }
         AutoArrange.fit(window)
         giveFocusBack(to: window)
@@ -350,19 +554,19 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     }
 
     func arrange(with strategy: ArrangeStrategy) {
-        close()
+        closePopover()
         AppController.shared.arrangeCurrentScreen(strategy)
     }
 
     func apply(_ layout: Layout) {
-        close()
+        closePopover()
         AppController.shared.apply(layout)
     }
 
     func saveLayout() {
         // The snapshot has to be taken before the alert steals the front window.
         let layout = AppController.shared.captureLayout(named: "")
-        close()
+        closePopover()
         let alert = NSAlert()
         alert.messageText = "Salva la disposizione attuale"
         alert.informativeText = "Dai un nome alla disposizione delle finestre di adesso."
@@ -381,13 +585,8 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         Store.shared.mutate { $0.layouts.append(Layout(name: name, placements: layout.placements)) }
     }
 
-    func openPreferences() {
-        close()
-        PreferencesWindowController.shared.show()
-    }
-
     func openAccessibility() {
-        close()
+        closePopover()
         AX.openAccessibilitySettings()
     }
 }

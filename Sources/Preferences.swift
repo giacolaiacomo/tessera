@@ -1,8 +1,9 @@
-// Tessera — the settings window: grid, zones, automatic arrangement, general options.
+// Tessera — the settings, as pages of the menu bar popover: grid, zones, automatic
+// arrangement, general options. There is no settings window.
 //
 // Editing model: the SwiftUI state below is a one-way mirror of the Store. Every control writes
 // through `PrefsModel.update`, which calls `Store.shared.mutate` and then re-reads the config.
-// This window deliberately does not listen to `Store.shared.onChange` (that handler is
+// These pages deliberately do not listen to `Store.shared.onChange` (that handler is
 // AppController's): observing it here would turn every keystroke into a write/refresh loop.
 //
 // The visual idiom — narrow column, cards with an uppercase caption, 12 pt labels with a 10.5 pt
@@ -14,21 +15,21 @@ import SwiftUI
 
 // MARK: - Shared style
 
-/// A titled card: the one container both the popover and this window are built out of.
+/// A titled card: the one container every page is built out of.
 struct TesseraCard<Content: View>: View {
     var title: String?
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             if let title {
                 Text(title.uppercased())
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .padding(.leading, 4)
             }
-            VStack(alignment: .leading, spacing: 8) { content }
-                .padding(10)
+            VStack(alignment: .leading, spacing: 7) { content }
+                .padding(9)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Color.primary.opacity(0.055)))
@@ -73,60 +74,22 @@ private struct MiniStepper: View {
 }
 
 private struct MiniSlider: View {
+    enum Unit { case points, percent }
+
     @Binding var value: CGFloat
     let range: ClosedRange<CGFloat>
+    var unit = Unit.points
 
     var body: some View {
         HStack(spacing: 6) {
-            Slider(value: $value, in: range).controlSize(.small).frame(width: 104)
-            Text("\(Int(value.rounded()))")
+            Slider(value: $value, in: range).controlSize(.small).frame(width: 84)
+            Text(unit == .percent ? "\(Int((value * 100).rounded()))%" : "\(Int(value.rounded()))")
                 .font(.system(size: 11, design: .rounded)).monospacedDigit()
-                .foregroundStyle(.secondary).frame(width: 20, alignment: .trailing)
+                .foregroundStyle(.secondary).frame(width: 28, alignment: .trailing)
         }
     }
 }
 
-// MARK: - Window
-
-final class PreferencesWindowController {
-    static let shared = PreferencesWindowController()
-
-    private var model: PrefsModel?
-    private var window: NSWindow?
-
-    var isOpen: Bool { window?.isVisible == true }
-
-    private init() {}
-
-    /// The window and its hosting view are built on first use and then kept.
-    ///
-    /// Throwing them away on close was measured and returns nothing: closing a window already
-    /// frees the backing store and the rendered layers, and the retained view tree costs about
-    /// 0.2 MB — noise. Same protocol, both builds: 29.4 MB against 29.6 MB, 45 s after closing.
-    func show() {
-        if window == nil {
-            let model = PrefsModel()
-            self.model = model
-            let hosting = NSHostingController(rootView: PrefsRootView(model: model))
-            let window = NSWindow(contentViewController: hosting)
-            window.styleMask = [.titled, .closable]
-            window.title = "Impostazioni di Tessera"
-            window.isReleasedWhenClosed = false   // this class owns it; AppKit must not free it
-            window.center()
-            self.window = window
-        } else {
-            model?.reload()
-        }
-        // The app is an .accessory: without activating first, the window opens behind everything.
-        NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
-    }
-
-    func close() {
-        window?.performClose(nil)
-    }
-
-}
 
 // MARK: - Model
 
@@ -146,7 +109,7 @@ final class PrefsModel: ObservableObject {
     init() {
         config = Store.shared.config
         screens = PrefsModel.screenOptions()
-        screenKey = (NSScreen.main ?? NSScreen.screens.first)?.tesseraKey ?? ""
+        screenKey = NSScreen.underMouse.tesseraKey   // the screen the popover is talking about
         launchAtLogin = SMAppService.mainApp.status == .enabled
         accessibilityTrusted = AX.isTrusted
     }
@@ -310,86 +273,65 @@ struct PrefsGridPreview: View {
     }
 }
 
-// MARK: - Root
 
-private enum PrefsTab: String, CaseIterable, Identifiable {
-    case grid, zones, auto, general
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .grid: return "Griglia"
-        case .zones: return "Zone"
-        case .auto: return "Automatico"
-        case .general: return "Generale"
-        }
-    }
-}
+// MARK: - Settings page
 
-struct PrefsRootView: View {
+/// The settings as one narrow column inside the popover: sections stacked, the zones editor on
+/// a page of its own because it is the only part that does not fit next to the rest.
+struct SettingsPage: View {
     @ObservedObject var model: PrefsModel
-    @State private var tab = PrefsTab.grid
+    @ObservedObject var popover: PopoverModel
+    var maxHeight: CGFloat = 380
 
     var body: some View {
-        VStack(spacing: 10) {
-            Picker("", selection: $tab) {
-                ForEach(PrefsTab.allCases) { Text($0.label).tag($0) }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                PrefsGridSection(model: model)
+                zonesLink
+                PrefsAutoSection(model: model)
+                PrefsGeneralSection(model: model)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    switch tab {
-                    case .grid: PrefsGridTab(model: model)
-                    case .zones: PrefsZonesTab(model: model)
-                    case .auto: PrefsAutoTab(model: model)
-                    case .general: PrefsGeneralTab(model: model)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, 4)
+            .padding(.trailing, 2)   // room for the scroller
+        }
+        .frame(maxHeight: maxHeight)
+    }
+
+    private var zonesLink: some View {
+        TesseraCard(title: "Zone") {
+            PopoverRow(title: "Aree con scorciatoia",
+                       trailing: model.config.zones.isEmpty ? "nessuna" : "\(model.config.zones.count)",
+                       chevron: true) {
+                popover.page = .zones
             }
         }
-        .padding(14)
-        .frame(width: 360, height: 520)
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
 // MARK: - Grid
 
-struct PrefsGridTab: View {
+struct PrefsGridSection: View {
     @ObservedObject var model: PrefsModel
 
     private let presets: [(cols: Int, rows: Int)] = [(2, 2), (3, 2), (12, 8), (16, 9)]
 
     var body: some View {
-        TesseraCard(title: "Schermo") {
+        TesseraCard(title: "Griglia") {
             if model.screens.count > 1 {
                 Picker("", selection: $model.screenKey) {
                     ForEach(model.screens) { Text($0.title).tag($0.id) }
                 }
-                .labelsHidden()
+                .labelsHidden().controlSize(.small)
             } else {
                 Text(model.screens.first?.title ?? "Schermo principale")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
             }
-        }
-        TesseraCard(title: "Celle") {
             SettingRow(label: "Colonne") {
                 MiniStepper(value: model.bindGrid(\.cols), range: 1...32)
             }
             SettingRow(label: "Righe") {
                 MiniStepper(value: model.bindGrid(\.rows), range: 1...32)
             }
-            Divider()
-            SettingRow(label: "Margine esterno") {
-                MiniSlider(value: model.bindGrid(\.outerGap), range: 0...40)
-            }
-            SettingRow(label: "Spazio fra le celle") {
-                MiniSlider(value: model.bindGrid(\.innerGap), range: 0...40)
-            }
-            Divider()
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 ForEach(presets, id: \.cols) { preset in
                     Button("\(preset.cols)×\(preset.rows)") {
                         model.setGrid(cols: preset.cols, rows: preset.rows)
@@ -397,38 +339,58 @@ struct PrefsGridTab: View {
                     .controlSize(.small)
                 }
             }
-        }
-        TesseraCard(title: "Anteprima") {
-            PrefsGridPreview(grid: model.grid, screenAspect: model.screenAspect, tiles: [])
-            Button("Sistema adesso") {
-                AppController.shared.arrangeCurrentScreen(Store.shared.config.defaultStrategy)
+            Divider()
+            SettingRow(label: "Bordo esterno") {
+                MiniSlider(value: model.bindGrid(\.outerGap), range: 0...40)
             }
-            .controlSize(.small)
-            Text("Dispone subito le finestre dello schermo sotto il puntatore con la strategia predefinita.")
+            SettingRow(label: "Fra le celle") {
+                MiniSlider(value: model.bindGrid(\.innerGap), range: 0...40)
+            }
+            Divider()
+            PrefsGridPreview(grid: model.grid, screenAspect: model.screenAspect, tiles: [], height: 74)
+            HStack {
+                Button("Sistema adesso") {
+                    AppController.shared.arrangeCurrentScreen(Store.shared.config.defaultStrategy)
+                }
+                .controlSize(.small)
+                Spacer()
+            }
+            Text("Dispone subito le finestre dello schermo sotto il puntatore.")
                 .font(.system(size: 10.5)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
 
-// MARK: - Zones
+// MARK: - Zones page
 
-struct PrefsZonesTab: View {
+struct ZonesPage: View {
     @ObservedObject var model: PrefsModel
+    var maxHeight: CGFloat = 380
 
     var body: some View {
-        TesseraCard(title: "Zone") {
-            if model.config.zones.isEmpty {
-                Text("Nessuna zona. Una zona è un'area della griglia con una scorciatoia globale.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                if model.config.zones.isEmpty {
+                    TesseraCard {
+                        Text("Nessuna zona. Una zona è un'area della griglia con una scorciatoia globale: ⌃⌥1 e la finestra attiva ci finisce dentro.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                ForEach(model.config.zones) { zone in
+                    TesseraCard {
+                        PrefsZoneRow(model: model, zone: model.bindZone(zone)) { model.removeZone(zone) }
+                    }
+                }
+                HStack {
+                    Button("Aggiungi zona") { model.addZone() }.controlSize(.small)
+                    Spacer()
+                }
             }
-            ForEach(model.config.zones) { zone in
-                PrefsZoneRow(model: model, zone: model.bindZone(zone)) { model.removeZone(zone) }
-                if zone.id != model.config.zones.last?.id { Divider() }
-            }
-            Button("Aggiungi zona") { model.addZone() }.controlSize(.small)
+            .padding(.trailing, 2)
         }
+        .frame(maxHeight: maxHeight)
     }
 }
 
@@ -438,62 +400,56 @@ struct PrefsZoneRow: View {
     let onDelete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
                 TextField("Nome", text: $zone.name)
-                    .textFieldStyle(.roundedBorder).controlSize(.small).frame(width: 120)
-                Spacer(minLength: 4)
-                HotkeyRecorder(keyCode: $zone.keyCode, modifiers: $zone.modifiers)
-                    .frame(width: 96, height: 22)
+                    .textFieldStyle(.roundedBorder).controlSize(.small)
                 Button { onDelete() } label: { Image(systemName: "trash") }
                     .buttonStyle(.borderless).help("Elimina la zona")
+            }
+            HStack(spacing: 6) {
+                Text("Scorciatoia").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                HotkeyRecorder(keyCode: $zone.keyCode, modifiers: $zone.modifiers)
+                    .frame(width: 118, height: 22)
             }
             GridPicker(grid: model.grid, screenAspect: model.screenAspect, selected: zone.cell) { cell in
                 zone.cell = cell
             }
-            .frame(height: 76)
+            .frame(height: 72)
         }
     }
 }
 
 // MARK: - Automatic
 
-struct PrefsAutoTab: View {
+struct PrefsAutoSection: View {
     @ObservedObject var model: PrefsModel
 
     var body: some View {
-        TesseraCard(title: "Strategia predefinita") {
+        TesseraCard(title: "Automatico") {
             Picker("", selection: model.bind(\.defaultStrategy)) {
                 ForEach(ArrangeStrategy.allCases, id: \.self) { Text($0.label).tag($0) }
             }
-            .labelsHidden()
+            .labelsHidden().controlSize(.small)
             Text(model.config.defaultStrategy.detail)
                 .font(.system(size: 10.5)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if model.config.defaultStrategy == .masterStack {
                 SettingRow(label: "Larghezza del master") {
-                    HStack(spacing: 6) {
-                        Slider(value: model.bind(\.masterFraction), in: 0.3...0.8)
-                            .controlSize(.small).frame(width: 104)
-                        Text("\(Int((model.config.masterFraction * 100).rounded()))%")
-                            .font(.system(size: 11, design: .rounded)).monospacedDigit()
-                            .foregroundStyle(.secondary).frame(width: 32, alignment: .trailing)
-                    }
+                    MiniSlider(value: model.bind(\.masterFraction), range: 0.3...0.8, unit: .percent)
                 }
             }
-        }
-        TesseraCard(title: "Finestre nuove") {
-            SettingRow(label: "Sistemale da sole",
+            SettingRow(label: "Finestre") {
+                MiniStepper(value: $model.previewWindowCount, range: 1...16)
+            }
+            PrefsGridPreview(grid: model.grid, screenAspect: model.screenAspect, tiles: tiles, height: 86)
+            Divider()
+            SettingRow(label: "Sistema le finestre nuove",
                        note: "Una finestra appena aperta finisce nel buco più grande della griglia.") {
                 Toggle("", isOn: model.bind(\.autoFitNewWindows))
                     .toggleStyle(.switch).controlSize(.mini).labelsHidden()
             }
-        }
-        TesseraCard(title: "Anteprima") {
-            SettingRow(label: "Finestre") {
-                MiniStepper(value: $model.previewWindowCount, range: 1...16)
-            }
-            PrefsGridPreview(grid: model.grid, screenAspect: model.screenAspect, tiles: tiles)
         }
     }
 
@@ -510,7 +466,7 @@ struct PrefsAutoTab: View {
 
 // MARK: - General
 
-struct PrefsGeneralTab: View {
+struct PrefsGeneralSection: View {
     @ObservedObject var model: PrefsModel
 
     var body: some View {
@@ -521,18 +477,16 @@ struct PrefsGeneralTab: View {
                     .toggleStyle(.switch).controlSize(.mini).labelsHidden()
             }
             Divider()
-            SettingRow(label: "Ridisponi subito quando cambio la griglia",
-                       note: "Le finestre dello schermo vengono sistemate all'istante, senza aspettare la prossima mossa.") {
+            SettingRow(label: "Ridisponi al cambio di griglia",
+                       note: "Le finestre dello schermo vengono sistemate all'istante.") {
                 Toggle("", isOn: model.bind(\.rearrangeOnGridChange))
                     .toggleStyle(.switch).controlSize(.mini).labelsHidden()
             }
-        }
-        TesseraCard(title: "Accessibilità") { PrefsAccessibilityStatus(model: model) }
-        TesseraCard {
-            HStack {
-                Text("Tessera \(appVersion)").font(.system(size: 10.5)).foregroundStyle(.tertiary)
-                Spacer()
-                Button("Mostra configurazione") { PrefsGeneralTab.revealConfig() }.controlSize(.small)
+            Divider()
+            PrefsAccessibilityStatus(model: model)
+            Divider()
+            SettingRow(label: "Cartella di configurazione") {
+                Button("Mostra") { PrefsGeneralSection.revealConfig() }.controlSize(.small)
             }
         }
     }
@@ -549,12 +503,13 @@ struct PrefsAccessibilityStatus: View {
 
     var body: some View {
         if model.accessibilityTrusted {
-            Label("Accesso attivo", systemImage: "checkmark.circle")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+            Label("Accesso Accessibilità attivo", systemImage: "checkmark.circle")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         } else {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text("Senza l'accesso Accessibilità, Tessera non può spostare le finestre.")
-                    .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 11)).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
                 Button("Apri Impostazioni di Sistema") {
                     AX.openAccessibilitySettings()
                     model.accessibilityTrusted = AX.isTrusted

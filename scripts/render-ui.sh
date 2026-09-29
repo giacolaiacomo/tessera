@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Renders the popover and the settings window to PNG without launching the app, so a UI change
-# can be looked at before it ships. Output: build/ui/popover.png and build/ui/prefs.png.
+# can be looked at before it ships. Output: build/ui/popover.png, settings.png, zones.png.
 set -e
 cd "$(dirname "$0")/.."
 OUT="${1:-build/ui}"

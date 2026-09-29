@@ -159,10 +159,10 @@ final class AppController {
                                         atomically: true, encoding: .utf8)
         }
         center.addObserver(forName: Self.settingsNotification, object: nil, queue: .main) { _ in
-            let controller = PreferencesWindowController.shared
-            let wasOpen = controller.isOpen
-            wasOpen ? controller.close() : controller.show()
-            let report = wasOpen ? "Impostazioni chiuse.\n" : "Impostazioni aperte.\n"
+            // Settings are a page of the popover now, so this toggles the popover on that page.
+            let wasOpen = MenuBarController.shared.isPopoverShown
+            MenuBarController.shared.togglePopover(page: .settings)
+            let report = wasOpen ? "Popover chiuso.\n" : "Impostazioni aperte nel popover.\n"
             try? report.write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
                               atomically: true, encoding: .utf8)
         }

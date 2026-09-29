@@ -222,6 +222,36 @@ enum AutoArrange {
         }
     }
 
+    // MARK: What the screen looks like right now
+
+    /// One entry per window on a screen, snapped to the cell it currently occupies — the data
+    /// behind the popover's live map. `resistant` marks the windows an arrangement cannot place
+    /// exactly (a full-screen window, or one whose minimum size is bigger than its cell).
+    struct Occupant {
+        let appName: String
+        let cell: CellRect
+        let isFocused: Bool
+        let resistant: Bool
+    }
+
+    static func occupancy(on screen: NSScreen) -> [Occupant] {
+        let grid = Store.shared.config.grid(for: screen.tesseraKey)
+        let focused = AX.focusedWindow()
+        let cellCount = grid.cols * grid.rows
+        return AX.sortedFrontToBack(windows(on: screen)).enumerated().compactMap { index, window in
+            guard let frame = window.frame else { return nil }
+            let cell = Geometry.nearestCell(for: frame, in: grid, on: screen.visibleFrame)
+            let cellSize = Geometry.frame(for: cell, in: grid, on: screen.visibleFrame)
+            return Occupant(appName: window.appName,
+                            cell: cell,
+                            isFocused: focused.map { CFEqual($0.element, window.element) } ?? false,
+                            // Bigger than the cell it sits in, or past what the grid can tile.
+                            resistant: index >= cellCount
+                                || frame.width > cellSize.width + 8
+                                || frame.height > cellSize.height + 8)
+        }
+    }
+
     // MARK: Auto-fit a single window
 
     /// The largest free rectangle of cells on a screen, ignoring `excluding` (the window being

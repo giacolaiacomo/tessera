@@ -1,5 +1,5 @@
-// Renders the popover and the settings window off-screen, so the layout can be inspected
-// without launching the app.
+// Renders the popover's pages off-screen, so the layout can be inspected without launching
+// the app. Output: popover.png (home) and settings.png.
 import AppKit
 import SwiftUI
 
@@ -29,5 +29,14 @@ func snapshot<V: View>(_ view: V, named name: String) {
 
 let popoverModel = PopoverModel()
 popoverModel.reload(window: nil)
-snapshot(TesseraPopover(model: popoverModel), named: CommandLine.arguments[1] + "/popover.png")
-snapshot(PrefsRootView(model: PrefsModel()), named: CommandLine.arguments[1] + "/prefs.png")
+popoverModel.loadDemo()   // the renderer has no Accessibility access: picture a lived-in screen
+popoverModel.pageMaxHeight = 4000
+let prefsModel = PrefsModel()
+snapshot(TesseraPopover(model: popoverModel, prefs: prefsModel),
+         named: CommandLine.arguments[1] + "/popover.png")
+popoverModel.page = .settings
+snapshot(TesseraPopover(model: popoverModel, prefs: prefsModel),
+         named: CommandLine.arguments[1] + "/settings.png")
+popoverModel.page = .zones
+snapshot(TesseraPopover(model: popoverModel, prefs: prefsModel),
+         named: CommandLine.arguments[1] + "/zones.png")

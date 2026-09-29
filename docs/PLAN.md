@@ -104,6 +104,24 @@ Esito finale sull'Acer, strategia «Una per cella»: 3 finestre esatte, 1 con l'
 Terminale (700 invece di 693, una riga di caratteri). Limiti veri e documentati nel README:
 dimensioni minime delle app, griglia dei caratteri di Terminale, finestre in fullscreen saltate.
 
+### Round 4 — UI e UX al livello di Burny (2026-09-29)
+
+Gianluca: «la UI e UX ancora non è a livello di Burny», e in particolare vedeva le impostazioni
+in una finestra separata. Risposte sue alle domande: manca il colpo d'occhio, più una sensazione
+generale di rifinitura; userà Tessera soprattutto dal popover e in automatico.
+
+- **Un solo contenitore**: `PreferencesWindowController` eliminato. Le impostazioni sono pagine
+  del popover (`PopoverPage { home, settings, zones }`) con header a chevron, come Burny.
+- **Colpo d'occhio**: la miniatura della griglia non è più vuota, è la mappa di dove sono le
+  finestre adesso (`AutoArrange.occupancy(on:)`): nome dell'app in ogni tessera, la finestra
+  attiva in accento, tratteggiate quelle che una disposizione non può piazzare esatta
+  (fullscreen, o dimensione minima più grande della cella). Sopra, la riga di stato
+  «Acer X34 P · 3×2 · 4 finestre».
+- **«Sistema tutto» è l'azione primaria**, un bottone vero col conteggio e il menu delle
+  strategie accanto, perché è così che verrà usata.
+- Popover 272 pt (era una finestra da 360×520 più un menu), scala tipografica di Burny.
+- La UI si guarda prima di consegnarla: `./scripts/render-ui.sh` rende home, impostazioni e zone.
+
 ### Memoria — misurata, non stimata (2026-09-29)
 
 `vmmap --summary` (physical footprint, quello che mostra Monitoraggio Attività), non RSS:
