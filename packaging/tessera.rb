@@ -2,7 +2,7 @@ class Tessera < Formula
   desc "Menu bar app that tiles your windows on a grid you choose"
   homepage "https://github.com/giacolaiacomo/tessera"
   url "https://github.com/giacolaiacomo/tessera/archive/refs/tags/v1.1.1.tar.gz"
-  sha256 "f85cb23e1b561b6ad821f7553fd284c1439ecdfe647728d89d95a87c5edbfa59"
+  sha256 "884e3bf0ece76dfce84dfef95c816425412301d5f89404f7b21b9b4f364a1670"
   license "MIT"
 
   depends_on :macos
