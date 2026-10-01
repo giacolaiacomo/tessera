@@ -6,7 +6,7 @@
 
 import AppKit
 
-let appVersion = "1.1.1"   // scripts/build-app.sh reads this for Info.plist
+let appVersion = "1.2.0"   // scripts/build-app.sh reads this for Info.plist
 let bundleID = "com.tessera.menubar"
 
 // MARK: - Grid

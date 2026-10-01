@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — 2026-10-01
 
 - **Tile just one app.** Asked for by the first person to install Tessera who was not its
   author: "if I only want to sort out the Terminal windows, how do I do that — do I have to put
