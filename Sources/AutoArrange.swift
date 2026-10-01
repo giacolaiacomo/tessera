@@ -500,13 +500,25 @@ enum AutoArrange {
     }
 
     /// Every placeable window currently on this screen and on this Space.
-    static func windows(on screen: NSScreen) -> [ManagedWindow] {
+    static func windows(on screen: NSScreen, ofApp app: String? = nil) -> [ManagedWindow] {
         let key = screen.tesseraKey
         return AX.onCurrentSpace(AX.allWindows()).filter { window in
             guard let frame = window.frame, frame.width > 1, frame.height > 1 else { return false }
             // Compare by screen key, not object identity: NSScreen hands out fresh instances.
-            return AX.screen(of: window).tesseraKey == key
+            guard AX.screen(of: window).tesseraKey == key else { return false }
+            guard let app, !app.isEmpty else { return true }
+            return window.appName.localizedCaseInsensitiveContains(app)
+                || window.bundleID.localizedCaseInsensitiveContains(app)
         }
+    }
+
+    /// The apps with more than one window on this screen, most windows first — the ones worth
+    /// offering to tile on their own.
+    static func appsWorthTilingAlone(on screen: NSScreen) -> [(name: String, count: Int)] {
+        Dictionary(grouping: windows(on: screen), by: { $0.appName })
+            .filter { $0.value.count > 1 }
+            .map { (name: $0.key, count: $0.value.count) }
+            .sorted { $0.count == $1.count ? $0.name < $1.name : $0.count > $1.count }
     }
 
     // MARK: Choosing the grid for you

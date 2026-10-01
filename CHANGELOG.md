@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Tile just one app.** Asked for by the first person to install Tessera who was not its author:
+  "if I only want to sort out the Terminal windows, how do I do that — do I have to put them all
+  on a Desktop of their own first?" No. When an app has more than one window on the screen, the
+  popover offers **Arrange only <app>** under Arrange all, and the command line takes
+  `--only Terminal`. Every other window stays exactly where it is.
+
 - **Fixed, properly this time: "Arrange all" still needed two or three clicks.** The previous fix
   asked a window again when it had not landed — but skipped any window whose app Tessera had
   learned needs more room than the cell, and those were exactly the windows that needed asking

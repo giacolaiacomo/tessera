@@ -181,6 +181,11 @@ let italian: [String: String] = [
     "Tessera is not running: open it and try again.":
         "Tessera non è in esecuzione: aprila e riprova.",
     "Tessera did not answer within 4 seconds.": "Tessera non ha risposto entro 4 secondi.",
+    "Arrange only %@": "Sistema solo %@",
+    "Its %d windows into the grid, everything else untouched":
+        "Le sue %d finestre nella griglia, il resto non si tocca",
+    " Only %@ — everything else was left where it was.":
+        " Solo %@ — tutto il resto è rimasto dov'era.",
 ]
 
 func tr(_ s: String) -> String { lang == "it" ? italian[s] ?? s : s }

@@ -35,6 +35,9 @@ final class PopoverModel: ObservableObject {
     @Published fileprivate(set) var zones: [Zone] = []
     @Published fileprivate(set) var layouts: [Layout] = []
     @Published fileprivate(set) var strategy = ArrangeStrategy.balanced
+    /// The app with the most windows on this screen, when it has more than one — the one it
+    /// makes sense to offer to tile on its own.
+    @Published fileprivate(set) var crowdedApp: (name: String, count: Int)?
 
     /// How tall a settings page may grow before it scrolls. The render script raises it to
     /// capture a whole page in one image; nothing else touches it.
@@ -65,6 +68,7 @@ final class PopoverModel: ObservableObject {
         zones = config.zones
         layouts = config.layouts
         strategy = config.defaultStrategy
+        crowdedApp = trusted ? AutoArrange.appsWorthTilingAlone(on: screen).first : nil
     }
 }
 
@@ -631,6 +635,14 @@ struct TesseraPopover: View {
                        enabled: model.trusted) {
                 MenuBarController.shared.fitGridToWindows()
             }
+            if let crowded = model.crowdedApp {
+                PopoverRow(title: String(format: tr("Arrange only %@"), crowded.name),
+                           note: String(format: tr("Its %d windows into the grid, everything else untouched"),
+                                        crowded.count),
+                           enabled: model.trusted) {
+                    MenuBarController.shared.arrange(with: model.strategy, onlyApp: crowded.name)
+                }
+            }
         }
     }
 
@@ -884,9 +896,9 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         arrange(with: strategy)
     }
 
-    func arrange(with strategy: ArrangeStrategy) {
+    func arrange(with strategy: ArrangeStrategy, onlyApp: String? = nil) {
         closePopover()
-        AppController.shared.arrangeCurrentScreen(strategy)
+        AppController.shared.arrangeCurrentScreen(strategy, onlyApp: onlyApp)
     }
 
     func apply(_ layout: Layout) {

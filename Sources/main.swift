@@ -36,13 +36,18 @@ final class AppController {
 
     /// Arranges every window on the screen under the mouse.
     @discardableResult
-    func arrangeCurrentScreen(_ strategy: ArrangeStrategy) -> Int {
-        arrange(NSScreen.underMouse, with: strategy)
+    func arrangeCurrentScreen(_ strategy: ArrangeStrategy, onlyApp: String? = nil) -> Int {
+        arrange(NSScreen.underMouse, with: strategy, onlyApp: onlyApp)
     }
 
+    /// With `onlyApp`, only that app's windows are tiled and everything else on the screen is
+    /// left exactly where it is — six Terminal windows into the grid without disturbing the
+    /// browser next to them.
     @discardableResult
-    func arrange(_ screen: NSScreen, with strategy: ArrangeStrategy) -> Int {
-        AutoArrange.apply(AutoArrange.windows(on: screen), on: screen, strategy: strategy)
+    func arrange(_ screen: NSScreen, with strategy: ArrangeStrategy,
+                 onlyApp: String? = nil) -> Int {
+        AutoArrange.apply(AutoArrange.windows(on: screen, ofApp: onlyApp),
+                          on: screen, strategy: strategy)
     }
 
     /// Picks the grid that shows everything open on this screen, applies it, and tiles one
@@ -233,13 +238,14 @@ final class AppController {
                                        atomically: true, encoding: .utf8)
         }
         center.addObserver(forName: Self.arrangeNotification, object: nil, queue: .main) { [weak self] note in
-            // The command line packs "strategy;screen" into the one string a distributed
-            // notification can carry.
+            // The command line packs "strategy;screen;onlyApp" into the one string a
+            // distributed notification can carry.
             let parts = (note.object as? String)?.components(separatedBy: ";") ?? []
             let strategy = parts.first.flatMap(ArrangeStrategy.init(rawValue:))
                 ?? self?.store.config.defaultStrategy ?? .balanced
             let screen = AppController.screen(matching: parts.count > 1 ? parts[1] : nil)
-            let moved = self?.arrange(screen, with: strategy) ?? 0
+            let only = parts.count > 2 && !parts[2].isEmpty ? parts[2] : nil
+            let moved = self?.arrange(screen, with: strategy, onlyApp: only) ?? 0
             let detail = AutoArrange.lastOutcomes
                 .map { "  \($0.app): \($0.outcome.described)" }
                 .joined(separator: "\n")
@@ -253,6 +259,9 @@ final class AppController {
                          screen.localizedName, strategy.label)
                 : String(format: tr("Screen %@: %d windows arranged with the “%@” arrangement."),
                          screen.localizedName, moved, strategy.label))
+                + (only.map {
+                    String(format: tr(" Only %@ — everything else was left where it was."), $0)
+                  } ?? "")
                 + "\n" + detail + "\n"
                 + diagnosticsText()
             try? report.write(to: Self.supportDirectory.appendingPathComponent("diagnose.txt"),
@@ -439,7 +448,10 @@ if let index = arguments.firstIndex(of: "--arrange") {
         ? arguments[index + 1] : ""
     let screenIndex = arguments.firstIndex(of: "--screen")
     let screen = screenIndex.flatMap { arguments.count > $0 + 1 ? arguments[$0 + 1] : nil } ?? ""
-    _ = askRunningApp(AppController.arrangeNotification, strategy: "\(strategy);\(screen)")
+    let onlyIndex = arguments.firstIndex(of: "--only")
+    let only = onlyIndex.flatMap { arguments.count > $0 + 1 ? arguments[$0 + 1] : nil } ?? ""
+    _ = askRunningApp(AppController.arrangeNotification,
+                      strategy: "\(strategy);\(screen);\(only)")
     exit(0)
 }
 

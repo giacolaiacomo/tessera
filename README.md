@@ -40,6 +40,10 @@ screen onto a grid — 3×2, 4×2, or anything up to 32×32 — instead of the u
 - **A live map of the screen,** in the popover. It shows the windows that are on that screen right
   now, drawn on the cells they occupy and labelled with their app. Drag a window's tile to move
   that window; click a cell — or drag across several — to send the frontmost window there.
+- **Tile just one app.** Six Terminal windows into the grid without touching the browser next
+  to them: when an app has more than one window on the screen, the popover offers **Arrange only
+  <app>** right under Arrange all, and the command line takes `--only Terminal`. Everything else
+  stays exactly where it is — no need to park the rest on another Desktop first.
 - **Arrange all,** with five arrangements: **Balanced** (as square as the screen allows),
   **One per cell** (the grid taken literally, empty cells stay empty), **Columns**, **Rows**, and
   **Master + stack** (the front window large on the left, the rest stacked on the right). Windows
@@ -134,6 +138,7 @@ T=~/Applications/Tessera.app/Contents/MacOS/Tessera
 $T --diagnose                       # what it sees and what it would do — moves nothing
 $T --arrange balanced               # arrange the screen under the pointer
 $T --arrange cells --screen Acer     # a chosen arrangement, on a chosen screen
+$T --arrange cells --only Terminal  # only that app's windows; everything else is left alone
 $T --fit-grid --screen Acer          # pick the grid from the open windows, then tile them all
 $T --place 2,0,1,2                   # the front window into a rectangle of cells: col,row,w,h
 $T --exit-fullscreen                 # bring full-screen windows back to the Desktop
