@@ -41,12 +41,10 @@ screen onto a grid — 3×2, 4×2, or anything up to 32×32 — instead of the u
   now, drawn on the cells they occupy and labelled with their app. Drag a window's tile to move
   that window; click a cell — or drag across several — to send the frontmost window there.
 - **Tile just one app.** Six Terminal windows into the grid without touching the browser next
-  to them. Above the arrange button, **Arrange which windows** shows one pill per app that has
-  more than one window on that screen, with how many: `All` · `Terminal 5` · `Chrome 3`. Tap one
-  and the button becomes **Arrange Terminal**; everything else stays exactly where it is, so
-  there is no need to park the rest on a Desktop of their own first. The pills only appear when
-  there is a choice to make, and reset to All each time the popover opens. From the command
-  line: `--only Terminal`.
+  to them. Nothing to configure: when the app you were last in has more than one window on that
+  screen, a second, quieter button appears under **Arrange all** saying **Only Terminal (5)**.
+  Press whichever one you meant. It is not there when there is nothing to offer. From the
+  command line: `--only Terminal`.
 - **Arrange all,** with five arrangements: **Balanced** (as square as the screen allows),
   **One per cell** (the grid taken literally, empty cells stay empty), **Columns**, **Rows**, and
   **Master + stack** (the front window large on the left, the rest stacked on the right). Windows

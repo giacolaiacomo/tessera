@@ -35,13 +35,10 @@ final class PopoverModel: ObservableObject {
     @Published fileprivate(set) var zones: [Zone] = []
     @Published fileprivate(set) var layouts: [Layout] = []
     @Published fileprivate(set) var strategy = ArrangeStrategy.balanced
-    /// The apps with more than one window on this screen: the ones it makes sense to offer to
-    /// tile on their own, most windows first.
-    @Published fileprivate(set) var crowdedApps: [(name: String, count: Int)] = []
-    /// Which of them "Arrange" is currently aimed at, or nil for the whole screen. Deliberately
-    /// not remembered between openings: a button that says "Arrange all" must never quietly
-    /// mean something narrower than that.
-    @Published var scopeApp: String?
+    /// How many windows the app you were last in has on this screen, when it has more than one.
+    /// Nil when there is nothing worth offering — and then nothing is drawn. There is no scope
+    /// to choose and no selection to remember: either the offer is there or it is not.
+    @Published fileprivate(set) var frontAppWindows: Int?
 
     /// How tall a settings page may grow before it scrolls. The render script raises it to
     /// capture a whole page in one image; nothing else touches it.
@@ -72,8 +69,9 @@ final class PopoverModel: ObservableObject {
         zones = config.zones
         layouts = config.layouts
         strategy = config.defaultStrategy
-        crowdedApps = trusted ? AutoArrange.appsWorthTilingAlone(on: screen) : []
-        scopeApp = crowdedApps.contains { $0.name == scopeApp } ? scopeApp : nil
+        frontAppWindows = trusted
+            ? AutoArrange.appsWorthTilingAlone(on: screen).first { $0.name == appName }?.count
+            : nil
     }
 }
 
@@ -396,52 +394,6 @@ struct GridChips: View {
     }
 }
 
-/// Which windows the arrange button acts on, in the same pills as the grid presets right above
-/// them. A picker would have hidden the choice behind a menu and read as a setting; these say
-/// at a glance that there are five Terminals and three Chrome windows on this screen, and cost
-/// one tap. Only drawn when there is a choice to make.
-struct ScopeChips: View {
-    let apps: [(name: String, count: Int)]
-    let selected: String?
-    var enabled = true
-    let onPick: (String?) -> Void
-
-    var body: some View {
-        HStack(spacing: 4) {
-            chip(label: tr("All"), width: nil, selected: selected == nil) { onPick(nil) }
-            ForEach(apps, id: \.name) { app in
-                chip(label: "\(short(app.name)) \(app.count)", width: nil,
-                     selected: selected == app.name) { onPick(app.name) }
-            }
-        }
-        .opacity(enabled ? 1 : 0.4)
-    }
-
-    /// "Google Chrome" in a 272 pt popover beside two other pills is three words too many.
-    private func short(_ name: String) -> String {
-        let words = name.split(separator: " ")
-        return words.count > 1 && name.count > 11 ? String(words.last!) : name
-    }
-
-    private func chip(label: String, width: CGFloat?, selected: Bool,
-                      action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .lineLimit(1)
-                .foregroundStyle(selected ? Color.white : Color.primary.opacity(0.75))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 3.5)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(selected ? Color.accentColor : Color.primary.opacity(0.07)))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-    }
-}
-
 // MARK: - Rows
 
 /// One tappable line: a label, an optional value or shortcut on the right, a note underneath.
@@ -659,23 +611,26 @@ struct TesseraPopover: View {
 
     private var arrangeCard: some View {
         TesseraCard {
-            if !model.crowdedApps.isEmpty {
-                Text(tr("Arrange which windows"))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                ScopeChips(apps: model.crowdedApps, selected: model.scopeApp,
-                           enabled: model.trusted) { model.scopeApp = $0 }
-            }
             HStack(spacing: 6) {
-                Button {
-                    MenuBarController.shared.arrange(with: model.strategy, onlyApp: model.scopeApp)
-                } label: {
-                    Text(model.scopeApp.map { String(format: tr("Arrange %@"), $0) }
-                            ?? tr("Arrange all"))
-                        .font(.system(size: 12, weight: .medium))
+                Button { MenuBarController.shared.arrange(with: model.strategy) } label: {
+                    Text(tr("Arrange all")).font(.system(size: 12, weight: .medium))
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(!model.trusted)
+            }
+            // Shown only when the app you were last in has more than one window here. Nothing
+            // to configure and nothing to undo: two buttons, press the one you meant.
+            if let count = model.frontAppWindows, let name = model.appName {
+                Button {
+                    MenuBarController.shared.arrange(with: model.strategy, onlyApp: name)
+                } label: {
+                    Text(String(format: tr("Only %@ (%d)"), name, count))
+                        .font(.system(size: 11.5))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(!model.trusted)
             }
@@ -721,11 +676,6 @@ struct TesseraPopover: View {
     }
 
     private var arrangeNote: String {
-        if let scope = model.scopeApp,
-           let app = model.crowdedApps.first(where: { $0.name == scope }) {
-            return String(format: tr("%d %@ windows · everything else stays put"),
-                          app.count, app.name)
-        }
         let head = model.tiled == 1
             ? tr("1 window in the grid")
             : String(format: tr("%d windows in the grid"), model.tiled)
