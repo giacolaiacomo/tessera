@@ -358,24 +358,35 @@ enum AutoArrange {
         // made. Repeating the *target* is safe. What is never safe, and was the last bug here,
         // is writing back a size read off the window a moment earlier: that one cancels a
         // resize still in flight.
-        // Asked once more, and then once more again if it is still not there. Terminal growing
-        // from small to large overshoots the height it was given by about sixty pixels and then
-        // takes the right one when asked a second time from where it now is, which is precisely
-        // why clicking "Arrange all" twice used to work. Two extra rounds is what that second
-        // click was, done here. Nothing is asked of a window already on its cell, or of an app
-        // known to need more room than the cell has, so a screen that lands first time pays
-        // nothing for this.
-        for _ in 0..<2 {
-            let missing = moves.indices.filter {
-                !landed($0) && fits(moves[$0].window, in: moves[$0].target.size)
-            }
-            guard !missing.isEmpty else { break }
+        // Asked again, and again, until the window stops getting closer. Apps do not jump to
+        // the size they are given: Terminal overshoots by about sixty pixels when it grows a
+        // long way, Mail comes down roughly half the remaining distance at a time. Each extra
+        // round is one of the clicks the user used to have to make by hand.
+        //
+        // What ends the loop is the window itself. A round that changes nothing is an app
+        // refusing, and refusing is instant — there is no point asking it a third time, and
+        // that window drops out while the others carry on. This used to be decided in advance,
+        // from the minimum size Tessera had learned for the app, and that was the bug behind
+        // "I have to click Arrange all two or three times": the windows skipped were exactly
+        // the ones that needed asking again, and the learned minimum they were skipped on was
+        // itself an over-estimate, measured from a window caught halfway through a resize.
+        var pending = Set(moves.indices.filter { !landed($0) })
+        for _ in 0..<3 {
+            guard !pending.isEmpty else { break }
             usleep(120_000)
-            for index in missing {
+            var was: [Int: CGRect] = [:]
+            for index in pending {
+                was[index] = AX.frame(of: moves[index].window.element)
                 AX.writeFrame(moves[index].window.element, to: moves[index].target)
                 lastCorrections += 1
             }
-            waitForStillness(moves.map { $0.window.element }, upTo: 400)
+            waitForStillness(pending.map { moves[$0].window.element }, upTo: 400)
+            pending = pending.filter { index in
+                guard !landed(index) else { return false }
+                guard let before = was[index],
+                      let now = AX.frame(of: moves[index].window.element) else { return false }
+                return !AX.same(before, now)   // still moving towards it: worth another ask
+            }
         }
         clock.mark("repeat ×\(lastCorrections)")
 

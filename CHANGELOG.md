@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Fixed, properly this time: "Arrange all" still needed two or three clicks.** The previous fix
+  asked a window again when it had not landed — but skipped any window whose app Tessera had
+  learned needs more room than the cell, and those were exactly the windows that needed asking
+  again. Worse, that learned minimum was often an over-estimate, measured from a window caught
+  halfway through a resize, so an app could disqualify itself from the retry on the strength of
+  a number that was wrong. Mail came down roughly half the remaining distance per click: 246 px
+  too wide, then 118, then 60.
+  What ends the retry now is the window itself, not a stored number. Tessera asks again — up to
+  three times, pausing first — and drops a window from the list the moment a round changes
+  nothing about it, because an app refusing its cell refuses instantly. Measured on both screens
+  from a scrambled start: one pass gives exactly what two passes give, five times out of five.
+  Mail, which used to take three clicks, now lands exact on the first.
+
 - **Fixed: "Arrange all" needed a second click to finish the job.** The first click put the
   windows in the right places at not-quite-the-right sizes; the second one got it right. Two
   separate causes, both now measured rather than guessed at.
