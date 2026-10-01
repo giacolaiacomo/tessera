@@ -181,9 +181,10 @@ let italian: [String: String] = [
     "Tessera is not running: open it and try again.":
         "Tessera non è in esecuzione: aprila e riprova.",
     "Tessera did not answer within 4 seconds.": "Tessera non ha risposto entro 4 secondi.",
-    "Arrange only %@": "Sistema solo %@",
-    "Its %d windows into the grid, everything else untouched":
-        "Le sue %d finestre nella griglia, il resto non si tocca",
+    "Arrange %@": "Sistema %@",
+    "All on this screen": "Tutte su questo schermo",
+    "%d %@ windows · everything else stays put":
+        "%d finestre di %@ · tutto il resto resta dov'è",
     " Only %@ — everything else was left where it was.":
         " Solo %@ — tutto il resto è rimasto dov'era.",
 ]

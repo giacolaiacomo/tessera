@@ -35,9 +35,13 @@ final class PopoverModel: ObservableObject {
     @Published fileprivate(set) var zones: [Zone] = []
     @Published fileprivate(set) var layouts: [Layout] = []
     @Published fileprivate(set) var strategy = ArrangeStrategy.balanced
-    /// The app with the most windows on this screen, when it has more than one — the one it
-    /// makes sense to offer to tile on its own.
-    @Published fileprivate(set) var crowdedApp: (name: String, count: Int)?
+    /// The apps with more than one window on this screen: the ones it makes sense to offer to
+    /// tile on their own, most windows first.
+    @Published fileprivate(set) var crowdedApps: [(name: String, count: Int)] = []
+    /// Which of them "Arrange" is currently aimed at, or nil for the whole screen. Deliberately
+    /// not remembered between openings: a button that says "Arrange all" must never quietly
+    /// mean something narrower than that.
+    @Published var scopeApp: String?
 
     /// How tall a settings page may grow before it scrolls. The render script raises it to
     /// capture a whole page in one image; nothing else touches it.
@@ -68,7 +72,8 @@ final class PopoverModel: ObservableObject {
         zones = config.zones
         layouts = config.layouts
         strategy = config.defaultStrategy
-        crowdedApp = trusted ? AutoArrange.appsWorthTilingAlone(on: screen).first : nil
+        crowdedApps = trusted ? AutoArrange.appsWorthTilingAlone(on: screen) : []
+        scopeApp = crowdedApps.contains { $0.name == scopeApp } ? scopeApp : nil
     }
 }
 
@@ -609,14 +614,19 @@ struct TesseraPopover: View {
     private var arrangeCard: some View {
         TesseraCard {
             HStack(spacing: 6) {
-                Button { MenuBarController.shared.arrange(with: model.strategy) } label: {
-                    Text(tr("Arrange all")).font(.system(size: 12, weight: .medium))
+                Button {
+                    MenuBarController.shared.arrange(with: model.strategy, onlyApp: model.scopeApp)
+                } label: {
+                    Text(model.scopeApp.map { String(format: tr("Arrange %@"), $0) }
+                            ?? tr("Arrange all"))
+                        .font(.system(size: 12, weight: .medium))
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(!model.trusted)
             }
+            if !model.crowdedApps.isEmpty { scopeMenu }
             strategyMenu
             Text(arrangeNote)
                 .font(.system(size: 10.5)).foregroundStyle(.tertiary)
@@ -635,14 +645,27 @@ struct TesseraPopover: View {
                        enabled: model.trusted) {
                 MenuBarController.shared.fitGridToWindows()
             }
-            if let crowded = model.crowdedApp {
-                PopoverRow(title: String(format: tr("Arrange only %@"), crowded.name),
-                           note: String(format: tr("Its %d windows into the grid, everything else untouched"),
-                                        crowded.count),
-                           enabled: model.trusted) {
-                    MenuBarController.shared.arrange(with: model.strategy, onlyApp: crowded.name)
+        }
+    }
+
+    /// Which windows the button acts on. Only shown when there is a choice to make — an app
+    /// with more than one window on this screen — and it lists every such app, because a
+    /// developer with five Terminals usually has three browser windows as well.
+    private var scopeMenu: some View {
+        HStack(spacing: 6) {
+            Text(tr("Windows")).font(.system(size: 11)).foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            Picker("", selection: $model.scopeApp) {
+                Text(tr("All on this screen")).tag(String?.none)
+                ForEach(model.crowdedApps, id: \.name) { app in
+                    Text("\(app.name) (\(app.count))").tag(String?.some(app.name))
                 }
             }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .fixedSize()
+            .disabled(!model.trusted)
         }
     }
 
@@ -667,6 +690,11 @@ struct TesseraPopover: View {
     }
 
     private var arrangeNote: String {
+        if let scope = model.scopeApp,
+           let app = model.crowdedApps.first(where: { $0.name == scope }) {
+            return String(format: tr("%d %@ windows · everything else stays put"),
+                          app.count, app.name)
+        }
         let head = model.tiled == 1
             ? tr("1 window in the grid")
             : String(format: tr("%d windows in the grid"), model.tiled)

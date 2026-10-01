@@ -41,9 +41,10 @@ screen onto a grid — 3×2, 4×2, or anything up to 32×32 — instead of the u
   now, drawn on the cells they occupy and labelled with their app. Drag a window's tile to move
   that window; click a cell — or drag across several — to send the frontmost window there.
 - **Tile just one app.** Six Terminal windows into the grid without touching the browser next
-  to them: when an app has more than one window on the screen, the popover offers **Arrange only
-  <app>** right under Arrange all, and the command line takes `--only Terminal`. Everything else
-  stays exactly where it is — no need to park the rest on another Desktop first.
+  to them. The **Windows** picker sits under the arrange button and lists every app with more
+  than one window on that screen, with its count — pick one and the button becomes **Arrange
+  Terminal**. Everything else stays exactly where it is, so there is no need to park the rest on
+  a Desktop of their own first. From the command line: `--only Terminal`.
 - **Arrange all,** with five arrangements: **Balanced** (as square as the screen allows),
   **One per cell** (the grid taken literally, empty cells stay empty), **Columns**, **Rows**, and
   **Master + stack** (the front window large on the left, the rest stacked on the right). Windows
