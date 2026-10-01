@@ -2,16 +2,17 @@
 
 ## Unreleased
 
-- **Tile just one app.** Asked for by the first person to install Tessera who was not its author:
-  "if I only want to sort out the Terminal windows, how do I do that — do I have to put them all
-  on a Desktop of their own first?" No. A **Windows** picker sits directly under the arrange
-  button, next to the one that picks the arrangement, and lists every app with more than one
-  window on that screen together with how many — five Terminals and three Chrome windows are
-  both offered, not just the busiest one. Pick one and the button itself changes to **Arrange
-  Terminal**, and the line under it says what will happen: "5 Terminal windows · everything else
-  stays put". It resets to all windows every time the popover opens, because a button that says
-  "Arrange all" must never quietly mean something narrower. From the command line:
-  `--only Terminal`.
+- **Tile just one app.** Asked for by the first person to install Tessera who was not its
+  author: "if I only want to sort out the Terminal windows, how do I do that — do I have to put
+  them all on a Desktop of their own first?" No. Above the arrange button, **Arrange which
+  windows** offers one pill per app with more than one window on that screen, and its count:
+  `All` · `Terminal 5` · `Chrome 3`. They are the same pills as the grid presets higher up, so
+  there is nothing new to learn, every crowded app is visible at once rather than hidden behind
+  a menu, and it costs one tap. Tap one and the button itself becomes **Arrange Terminal**, with
+  the line underneath saying what will happen: "5 Terminal windows · everything else stays put".
+  The pills appear only when there is a choice to make, and reset to All every time the popover
+  opens, because a button reading "Arrange all" must never quietly mean something narrower. From
+  the command line: `--only Terminal`.
 
 - **Fixed, properly this time: "Arrange all" still needed two or three clicks.** The previous fix
   asked a window again when it had not landed — but skipped any window whose app Tessera had

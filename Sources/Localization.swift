@@ -181,6 +181,8 @@ let italian: [String: String] = [
     "Tessera is not running: open it and try again.":
         "Tessera non è in esecuzione: aprila e riprova.",
     "Tessera did not answer within 4 seconds.": "Tessera non ha risposto entro 4 secondi.",
+    "Arrange which windows": "Quali finestre sistemare",
+    "All": "Tutte",
     "Arrange %@": "Sistema %@",
     "All on this screen": "Tutte su questo schermo",
     "%d %@ windows · everything else stays put":

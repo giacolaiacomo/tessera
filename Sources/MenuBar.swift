@@ -396,6 +396,52 @@ struct GridChips: View {
     }
 }
 
+/// Which windows the arrange button acts on, in the same pills as the grid presets right above
+/// them. A picker would have hidden the choice behind a menu and read as a setting; these say
+/// at a glance that there are five Terminals and three Chrome windows on this screen, and cost
+/// one tap. Only drawn when there is a choice to make.
+struct ScopeChips: View {
+    let apps: [(name: String, count: Int)]
+    let selected: String?
+    var enabled = true
+    let onPick: (String?) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            chip(label: tr("All"), width: nil, selected: selected == nil) { onPick(nil) }
+            ForEach(apps, id: \.name) { app in
+                chip(label: "\(short(app.name)) \(app.count)", width: nil,
+                     selected: selected == app.name) { onPick(app.name) }
+            }
+        }
+        .opacity(enabled ? 1 : 0.4)
+    }
+
+    /// "Google Chrome" in a 272 pt popover beside two other pills is three words too many.
+    private func short(_ name: String) -> String {
+        let words = name.split(separator: " ")
+        return words.count > 1 && name.count > 11 ? String(words.last!) : name
+    }
+
+    private func chip(label: String, width: CGFloat?, selected: Bool,
+                      action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .foregroundStyle(selected ? Color.white : Color.primary.opacity(0.75))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 3.5)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(selected ? Color.accentColor : Color.primary.opacity(0.07)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+}
+
 // MARK: - Rows
 
 /// One tappable line: a label, an optional value or shortcut on the right, a note underneath.
@@ -613,6 +659,13 @@ struct TesseraPopover: View {
 
     private var arrangeCard: some View {
         TesseraCard {
+            if !model.crowdedApps.isEmpty {
+                Text(tr("Arrange which windows"))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ScopeChips(apps: model.crowdedApps, selected: model.scopeApp,
+                           enabled: model.trusted) { model.scopeApp = $0 }
+            }
             HStack(spacing: 6) {
                 Button {
                     MenuBarController.shared.arrange(with: model.strategy, onlyApp: model.scopeApp)
@@ -626,7 +679,6 @@ struct TesseraPopover: View {
                 .controlSize(.small)
                 .disabled(!model.trusted)
             }
-            if !model.crowdedApps.isEmpty { scopeMenu }
             strategyMenu
             Text(arrangeNote)
                 .font(.system(size: 10.5)).foregroundStyle(.tertiary)
@@ -645,27 +697,6 @@ struct TesseraPopover: View {
                        enabled: model.trusted) {
                 MenuBarController.shared.fitGridToWindows()
             }
-        }
-    }
-
-    /// Which windows the button acts on. Only shown when there is a choice to make — an app
-    /// with more than one window on this screen — and it lists every such app, because a
-    /// developer with five Terminals usually has three browser windows as well.
-    private var scopeMenu: some View {
-        HStack(spacing: 6) {
-            Text(tr("Windows")).font(.system(size: 11)).foregroundStyle(.secondary)
-            Spacer(minLength: 4)
-            Picker("", selection: $model.scopeApp) {
-                Text(tr("All on this screen")).tag(String?.none)
-                ForEach(model.crowdedApps, id: \.name) { app in
-                    Text("\(app.name) (\(app.count))").tag(String?.some(app.name))
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .controlSize(.small)
-            .fixedSize()
-            .disabled(!model.trusted)
         }
     }
 
